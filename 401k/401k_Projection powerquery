@@ -1,0 +1,17 @@
+let
+    Source = Excel.Workbook(File.Contents("\\10.4.71.44\hr\dlt\HR Corporate\Polly\401k\401k Contribution Projection\401k_Y2D_Contribution.xlsx"), null, true),
+    Sheet1_Sheet = Source{[Item="Sheet1",Kind="Sheet"]}[Data],
+    #"Promoted Headers" = Table.PromoteHeaders(Sheet1_Sheet, [PromoteAllScalars=true]),
+    #"Changed Type" = Table.TransformColumnTypes(#"Promoted Headers",{{"Address Number", Int64.Type}, {"PDBA Code", Int64.Type}, {"PDBA Code_1", type text}, {"Alpha Name", type text}, {"Co ", Int64.Type}, {"Pay Freq", type text}, {"PP Count", Int64.Type}, {"Annual Salary", type number}, {"Check Date", type date}, {"Amount or Rate", Int64.Type}, {"Y2D Contribution", type number}, {"Y2D Gross Pay", type number}}),
+    #"Grouped By Address Number" = Table.Group(
+        #"Changed Type",
+            {"Address Number", "Alpha Name", "Annual Salary", "PP Count", "PDBA Code", "PDBA Code_1"},
+            {
+                {"Rate", each let r = List.RemoveNulls(Table.Column(_, "Amount or Rate")) in if List.Count(r) > 0 then Number.From(r{0})/100 else null, type nullable number},
+                {"Y2D Contribution", each List.Sum(Table.Column(_, "Y2D Contribution")), type number},
+                {"Y2D Gross Pay", each List.Sum(Table.Column(_, "Y2D Gross Pay")), type number},
+                {"PP Paid Count", each List.Count(List.Distinct(Table.Column(_, "Check Date"))), Int64.Type}
+            }
+    )
+in
+    #"Grouped By Address Number"

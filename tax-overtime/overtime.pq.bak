@@ -1,0 +1,29 @@
+let
+    WorkedCodes = PayTypes,
+    Source = HoursWorked,
+    AddedColumn = Table.AddColumn(Source, "Is Worked Code", each List.Contains(Table.Column(WorkedCodes, "Pay Type"), [PDBA Code])),
+    #"Filtered Rows" = Table.SelectRows(AddedColumn, each ([Is Worked Code] = true)),
+    AddedTaxReduction = Table.AddColumn(#"Filtered Rows", "Tax Reduction Rate", each 
+        let
+            matchRow = Table.SelectRows(WorkedCodes, (r) => r[Pay Type] = [PDBA Code])
+        in
+            if Table.RowCount(matchRow) > 0 then matchRow{0}[Tax Reduction] else null
+    ),
+    #"Grouped Rows" = Table.Group(AddedTaxReduction, {"Address Number", "Alpha Name", "Pay Per Date", "Business Unit", "Job Typ", "Co "}, {{"Hours Worked", each List.Sum([Hours Worked]), type nullable number}, {"AllRows", each _, type table [Address Number=nullable number, Alpha Name=nullable text, Pay Per Date=nullable date, #"Trans. No."=number, Business Unit=nullable text, Job Typ=nullable text, #"Co "=nullable number, PDBA Code=nullable number, Check Date=nullable date, PDBA Code_1=nullable text, Hours Paid=nullable number, Hours Worked=nullable number, Gross Pay=number, Is Worked Code=logical, Tax Reduction Rate=number]}, {"Hours Paid", each List.Sum([Hours Paid]), type nullable number}}),
+    AddedRegOTHoursPaid = Table.AddColumn(#"Grouped Rows", "Reg Overtime Hours Paid", each List.Sum(Table.SelectRows([AllRows], (r) => r[PDBA Code] = 101)[#"Hours Paid"]) ?? 0),
+    AddedDblOTHoursPaid = Table.AddColumn(AddedRegOTHoursPaid, "Dbl Overtime Hours Paid", each List.Sum(Table.SelectRows([AllRows], (r) => r[PDBA Code] = 102)[#"Hours Paid"]) ?? 0),
+    AddedRegOTHoursWorked = Table.AddColumn(AddedDblOTHoursPaid, "Reg Overtime Hours Worked", each List.Sum(Table.SelectRows([AllRows], (r) => r[PDBA Code] = 101)[#"Hours Worked"]) ?? 0),
+    AddedDblOTHoursWorked = Table.AddColumn(AddedRegOTHoursWorked, "Dbl Overtime Hours Worked", each List.Sum(Table.SelectRows([AllRows], (r) => r[PDBA Code] = 102)[#"Hours Worked"]) ?? 0),
+    AddedRegOTPaid = Table.AddColumn(AddedDblOTHoursWorked, "Reg Overtime Paid", each List.Sum(Table.SelectRows([AllRows], (r) => r[PDBA Code] = 101)[Gross Pay]) ?? 0),
+    AddedDblOTPaid = Table.AddColumn(AddedRegOTPaid, "Dbl Overtime Paid", each List.Sum(Table.SelectRows([AllRows], (r) => r[PDBA Code] = 102)[Gross Pay]) ?? 0),
+    AddedOTTaxRedHours = Table.AddColumn(AddedDblOTPaid, "OT Tax Red Hours", each List.Max({([Hours Worked] ?? 0) - 40, 0})),
+    AddedTaxRedRegOT = Table.AddColumn(AddedOTTaxRedHours, "Tax Red Reg OT", each 
+        if ([Reg Overtime Hours Paid] ?? 0) = 0 then 0 
+        else (([OT Tax Red Hours] ?? 0) / ([Reg Overtime Hours Paid] ?? 0) * ([Reg Overtime Paid] ?? 0) * 0.3333) ?? 0),
+    AddedTaxRedDTHours = Table.AddColumn(AddedTaxRedRegOT, "Tax Red DT Hours", each List.Max({([OT Tax Red Hours] ?? 0) - ([Reg Overtime Hours Paid] ?? 0), 0})),
+    AddedTaxRedDT = Table.AddColumn(AddedTaxRedDTHours, "Tax Red DT", each 
+        if ([Dbl Overtime Paid] ?? 0) = 0 then 0 
+        else (([Tax Red DT Hours] ?? 0) / ([Dbl Overtime Hours Paid] ?? 0) * ([Dbl Overtime Paid] ?? 0) * 0.25) ?? 0),
+    AddedTaxRedTotal = Table.AddColumn(AddedTaxRedDT, "Tax Red $ Total", each ([Tax Red DT] ?? 0) + ([Tax Red Reg OT] ?? 0))
+in
+    AddedTaxRedTotal

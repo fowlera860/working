@@ -1,0 +1,4 @@
+PlanningGroup,ColorGroup,Style,Color,Size,Back,StyleName,ColorName,RollSize,FaceWt,MachineNum,MachineDescription,EPN
+NG-Wool,00310,9223,00310,1200,08,Style A,Navy,60,24,M01,Tufter 1,EPN001
+NG-Wool,00311,9224,00311,1200,08,Style B,Red,60,24,M02,Tufter 2,EPN002
+NG-Wool,00312,9225,00312,1200,08,Style C,Black,60,24,M01,Tufter 1,EPN003

@@ -1,0 +1,11 @@
+let
+    Source = SharePoint.Files("https://dixiegroup.sharepoint.com/sites/PlanningSchedulingTeam", [ApiVersion = 15]),
+    #"Sales_Forecast xlsx_https://dixiegroup sharepoint com/sites/PlanningSchedulingTeam/Shared Documents/Sales BI Sandbox/" = Source{[Name="Sales_Forecast.xlsx",#"Folder Path"="https://dixiegroup.sharepoint.com/sites/PlanningSchedulingTeam/Shared Documents/Sales BI Sandbox/"]}[Content],
+    #"Imported Excel Workbook" = Excel.Workbook(#"Sales_Forecast xlsx_https://dixiegroup sharepoint com/sites/PlanningSchedulingTeam/Shared Documents/Sales BI Sandbox/"),
+    Sheet1_Sheet = #"Imported Excel Workbook"{[Item="Sheet1",Kind="Sheet"]}[Data],
+    #"Promoted Headers" = Table.PromoteHeaders(Sheet1_Sheet, [PromoteAllScalars=true]),
+    #"Changed Type" = Table.TransformColumnTypes(#"Promoted Headers",{{"FY ", Int64.Type}, {"LT ", type text}, {"Business Unit", Int64.Type}, {"Business Unit_1", type text}, {"Obj Acct", Int64.Type}, {"Sub ", Int64.Type}, {"Description ", type text}, {"CHRG TYPE", type text}, {"BUS OWN", type text}, {"Co ", Int64.Type}, {"CAT 11", Int64.Type}, {"Net Posting 01", type number}, {"Net Posting 02", type number}, {"Net Posting 03", type number}, {"Net Posting 04", type number}, {"Net Posting 05", type number}, {"Net Posting 06", type number}, {"Net Posting 07", type number}, {"Net Posting 08", type number}, {"Net Posting 09", type number}, {"Net Posting 10", type number}, {"Net Posting 11", type number}, {"Net Posting 12", type number}, {"Net Posting 13", Int64.Type}, {"Net Posting 14", Int64.Type}}),
+    RenamedColumns = Table.RenameColumns(#"Changed Type",{{"CAT 11", "Territory"}, {"Net Posting 01", "January"}, {"Net Posting 02", "February"}, {"Net Posting 03", "March"}, {"Net Posting 04", "April"}, {"Net Posting 05", "May"}, {"Net Posting 06", "June"}, {"Net Posting 07", "July"}, {"Net Posting 08", "August"}, {"Net Posting 09", "September"}, {"Net Posting 10", "October"}, {"Net Posting 11", "November"}, {"Net Posting 12", "December"}}),
+    RemovedColumns = Table.RemoveColumns(RenamedColumns,{"LT ", "Net Posting 13", "Net Posting 14"})
+in
+    RemovedColumns

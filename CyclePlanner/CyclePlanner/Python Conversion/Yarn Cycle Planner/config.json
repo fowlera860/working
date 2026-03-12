@@ -1,0 +1,27 @@
+{
+  "paths": {
+    "export_folder": "\\\\tdg-sa-file\\Atmore\\IE\\Yarn Cycle Planner\\exports",
+    "yarn_alts_xlsx": "\\\\tdg-sa-file\\Atmore\\IE\\Cycle Planner\\YarnAlts.xlsx",
+    "cycle_planner_yarn_demand_csv": "\\\\tdg-sa-file\\Atmore\\IE\\Cycle Planner\\exports\\Cycle Planner Yarn Demand.csv"
+  },
+  "excel_sheets": {
+    "yarn_alts_sheet": "YarnAlts"
+  },
+  "databases": {
+    "CAMS": {
+      "type": "sqlserver",
+      "server": "TDG-DLT-IBMSQL",
+      "database": "CAMS"
+    },
+    "CAMSY": {
+      "type": "ibmi",
+      "connection_string": "DRIVER={Client Access ODBC Driver (32-bit)};SYSTEM=TDG-SA-DTS;DBQ=CAMSY;DFTPKGLIB=QGPL;LANGUAGEID=ENU;PKG=QGPL/DEFAULT(IBM),2,0,1,0,512;QRYSTGLMT=-1;"
+    }
+  },
+  "parameters": {
+    "inv_roll_cutoff": 3,
+    "inventory_preview_rows": 500,
+    "minimum_weeks": 2,
+    "target_weeks": 6
+  }
+}

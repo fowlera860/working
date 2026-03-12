@@ -1,0 +1,22 @@
+{
+  "paths": {
+    "export_folder": "\\\\tdg-sa-file\\Atmore\\IE\\Cycle Planner\\exports",
+    "planning_groups_xlsx": "\\\\tdg-sa-file\\Atmore\\IE\\Cycle Planner\\Planning Groups.xlsx",
+    "sales_forecast_xlsx": "\\\\tdg-sa-file\\Atmore\\IE\\Cycle Planner\\SalesForecast.xlsx",
+    "yarn_alts_xlsx": "\\\\tdg-sa-file\\Atmore\\IE\\Cycle Planner\\YarnAlts.xlsx"
+  },
+  "excel_sheets": {
+    "planning_groups_sheet": "Sheet1",
+    "sales_forecast_sheet": "SalesForecast",
+    "yarn_alts_sheet": "YarnAlts"
+  },
+  "database": {
+    "server": "TDG-DLT-IBMSQL",
+    "database": "CAMS"
+  },
+  "parameters": {
+    "inv_roll_cutoff": 3,
+    "minimum_weeks": 2,
+    "target_weeks": 6
+  }
+}

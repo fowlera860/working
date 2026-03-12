@@ -1,0 +1,223 @@
+Cal Pay Data - Plain Text Documentation
+=======================================
+
+Overview
+--------
+This folder contains Power Query objects used to prepare California payroll reporting outputs.
+The pipeline starts from employee-level payroll extract data (from an Excel file), enriches rows with
+lookup codes, and produces a summarized output grouped by establishment and reporting dimensions.
+
+Primary output query:
+- summary.pq
+
+Core staging/enrichment query:
+- Cal EE Summary
+
+Supporting inputs:
+- EE Data.pq
+- Demo_Codes.pq
+- Job_Codes
+- PayBand_Codes
+- Establishments.pq
+- Year_Ran.pq
+
+External dependencies (referenced but not defined in this folder):
+- CA All EEs (used by Cal EE Summary for filtering via inner join)
+- Excel named ranges/tables: CurrentDirectory, FileName, Demo_Codes, Job_Codes, PayBand_Codes, Establishments
+
+
+File-by-File Details
+--------------------
+
+1) EE Data.pq
+Purpose:
+- Loads base employee/payroll detail from an external workbook and applies initial transformations.
+
+Inputs:
+- Excel named range CurrentDirectory (folder path)
+- Excel named range FileName (file name)
+- Sheet1 in the external workbook
+
+Key logic:
+- Promotes first row to headers.
+- Applies data types to core payroll and HR columns.
+- Caps Worked Weeks at 53.
+- Derives Establishment from Business Unit:
+  - 60 => Porterville Plant
+  - 22 => Susan Street Plant
+  - else => Sales - CA
+
+Output:
+- Employee/paycheck-level detail with standardized types and derived Establishment.
+
+
+2) Demo_Codes.pq
+Purpose:
+- Loads CA demographic code lookup table from workbook table Demo_Codes.
+
+Inputs:
+- Excel.CurrentWorkbook table Demo_Codes
+
+Key logic:
+- Type conversions for Sex, EEO Min Code, CA demographic code columns.
+
+Output:
+- Lookup table used in Cal EE Summary for CA Demo Code derivation.
+
+
+3) Job_Codes
+Purpose:
+- Loads job code crosswalk from workbook table Job_Codes.
+
+Inputs:
+- Excel.CurrentWorkbook table Job_Codes
+
+Key logic:
+- Type conversions for EEO Job Code and CA Job Code.
+
+Output:
+- Lookup table used in Cal EE Summary for CA Job Code derivation.
+
+
+4) PayBand_Codes
+Purpose:
+- Intended wage-band lookup for assigning CA Pay Band Code.
+
+Current state:
+- File exists but is empty in this workspace snapshot.
+
+Impact:
+- Cal EE Summary attempts to reference PayBand_Codes to assign CA Pay Band Code.
+- If PayBand_Codes is not available as a query/table at runtime, code assignment can fail or return null.
+
+Recommended check:
+- Confirm whether PayBand_Codes is defined elsewhere in the workbook model or restore this query/file content.
+
+
+5) Establishments.pq
+Purpose:
+- Loads establishment metadata used for final report enrichment.
+
+Inputs:
+- Excel.CurrentWorkbook table Establishments
+
+Key logic:
+- Applies types for name/address/city/state/ZIP/NAICS/activity fields.
+
+Output:
+- Establishment master data joined into summary.pq.
+
+
+6) Cal EE Summary
+Purpose:
+- Builds employee-level CA reporting dataset with derived reporting codes and hours.
+
+Inputs:
+- EE Data
+- CA All EEs (inner join on Address Number)
+- PayBand_Codes
+- Job_Codes
+- Demo_Codes
+
+Key logic:
+- Inner joins EE Data to CA All EEs by Address Number to keep CA-eligible employees.
+- Groups by employee attributes to produce:
+  - # Paychecks = distinct count of Check Date
+  - Total Hours = sum of Hours
+- Derives CA Pay Band Code via wage range lookup against Medicare Taxable Wages.
+- Derives CA Job Code via EEO Job match.
+- Derives CA Demo Code via Sex + EEO Min match.
+- Derives Emp Status:
+  - Employment Status = Salary Exempt => Exempt
+  - otherwise => Non-exempt
+- Derives Hour Worked:
+  - If EEO Job description is Sales Workers, uses # Paychecks * 86.67
+  - Else uses Total Hours
+
+Output:
+- Employee-level enriched dataset consumed by summary.pq.
+
+
+7) summary.pq
+Purpose:
+- Produces the final grouped reporting output for California pay data.
+
+Inputs:
+- Cal EE Summary
+- Establishments
+
+Key logic:
+- Adds Hourly Income = Medicare Taxable Wages / Hour Worked (null-safe for zero/null hours).
+- Groups by:
+  - Establishment, CA Job Code, CA Demo Code, CA Pay Band Code, Emp Status
+- Calculates grouped metrics:
+  - Number of EEs (row count)
+  - Worked Weeks sum
+  - Hours Worked sum
+  - Medicare Taxable Wages sum
+  - Median Hourly Income
+- Computes Mean = Med Taxable Wages / Hours Worked.
+- Adds Not Remote / Remote split:
+  - Sales - CA => Remote
+  - Other establishments => Not Remote
+- Adds EmpType = Full-time.
+- Left joins Establishments metadata.
+- Adds report flags:
+  - HQ = No
+  - Filed Last Year = Yes
+- Establishment Total is computed as sum(Number of EEs) grouped by Establishment and merged back.
+
+Output:
+- Final table with establishment details and grouped workforce/pay metrics.
+
+
+8) Year_Ran.pq
+Purpose:
+- Returns fiscal year indicator from EE Data.
+
+Key logic:
+- Extracts FY value from the first row of EE Data.
+
+Assumption:
+- EE Data has at least one row and the first row FY value is representative.
+
+
+Data Flow (High Level)
+----------------------
+1. EE Data.pq loads and prepares payroll detail.
+2. Cal EE Summary filters/enriches EE Data using CA All EEs and lookup tables.
+3. summary.pq aggregates Cal EE Summary and joins establishment attributes.
+4. Year_Ran.pq provides a reporting year scalar from EE Data.
+
+
+Key Business Rules Captured
+---------------------------
+- Establishment assignment by Business Unit (60, 22, else Sales - CA).
+- Sales Workers hours override: # Paychecks * 86.67.
+- Exempt classification driven by Employment Status = Salary Exempt.
+- Remote/Not Remote split based on Establishment = Sales - CA.
+
+
+Known Risks / Validation Checklist
+----------------------------------
+1) PayBand_Codes availability
+- Confirm PayBand_Codes query/table exists and is populated.
+
+2) CA All EEs dependency
+- Ensure CA All EEs query/table exists in the same workbook/model.
+
+3) Year_Ran robustness
+- If EE Data can be empty, add guard logic before Source{0}[FY].
+
+4) Lookup completeness
+- Validate that all EEO Job / Demo combinations map to codes to avoid nulls.
+
+5) Hours denominator checks
+- Mean and Hourly Income rely on nonzero hours; current query handles null/zero for Hourly Income only.
+
+
+Maintenance Notes
+-----------------
+- File naming is mixed (.pq and extensionless query files), but logic remains valid if references resolve.
+- Keep lookup tables (Job/Demo/PayBand/Establishments) synchronized with reporting-year requirements.
+- If Business Unit-to-Establishment mapping changes, update EE Data.pq first.

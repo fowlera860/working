@@ -1,0 +1,135 @@
+OVERTIME.PQ COLUMN DOCUMENTATION
+=================================
+
+DATA SOURCE:
+------------
+Primary Table: P0618 (Payroll Register)
+Lookup Table: F0719 (Timecard Transactions) - SubQuery for Hours Worked where ADR, CKDT, PRTR, PDBA = 8999
+Reference Table: PayTypes - Defines which PDBA codes are "worked codes" eligible for processing
+
+SOURCE FIELD MAPPINGS:
+- Address Number:      P0618.AN8
+- Alpha Name:          P0618.PALF
+- Pay Per Date:        P0618.PPED
+- Trans. No.:          P0618.PRTR
+- Business Unit:       P0618.MCU
+- Job Typ:             P0618.JBCD
+- Co:                  P0618.Co
+- PDBA Code:           P0618.PDBA
+- Check Date:          P0618.CKDT
+- PDBA Code (Desc):    P0618.PDBA Associated Description
+- Hours Paid:          P0618.PHRW
+- Hours Worked:        F0719.PHRW (from subquery matching on ADR, CKDT, PRTR where PDBA = 8999)
+- Gross Pay:           P0618.GPA
+
+FILTERING:
+- Only includes rows where PDBA Code exists in PayTypes table "Pay Type" column (worked codes filter)
+
+GROUPING:
+---------
+Records are grouped by: Address Number, Alpha Name, Check Date, Business Unit, Job Typ, Co
+
+CALCULATED COLUMNS:
+-------------------
+
+1. Hours Worked
+   - Sum of all Hours Worked (F0719.PHRW) for the grouped records
+   - Source: Timecard Transactions table subquery
+
+2. Hours Paid
+   - Sum of all Hours Paid (P0618.PHRW) for the grouped records
+   - Source: Payroll Register
+
+3. Reg Overtime Hours Paid
+   - Sum of Hours Paid (P0618.PHRW) where PDBA Code in {100, 101, 105} (Regular Overtime codes)
+   - Returns 0 if null
+
+4. Dbl Overtime Hours Paid
+   - Sum of Hours Paid (P0618.PHRW) where PDBA Code = 102 (Double Overtime)
+   - Returns 0 if null
+
+5. Reg Overtime Hours Worked
+   - Sum of Hours Worked (F0719.PHRW) where PDBA Code in {100, 101, 105} (Regular Overtime codes)
+   - Returns 0 if null
+
+6. Dbl Overtime Hours Worked
+   - Sum of Hours Worked (F0719.PHRW) where PDBA Code = 102 (Double Overtime)
+   - Returns 0 if null
+
+7. Reg Overtime Paid
+   - Sum of Gross Pay (P0618.GPA) where PDBA Code in {100, 101, 105} (Regular Overtime codes) AND Hours Paid <> 0
+   - Excludes adjustment entries where hours paid is zero
+   - Returns 0 if null
+
+8. Dbl Overtime Paid
+   - Sum of Gross Pay (P0618.GPA) where PDBA Code = 102 (Double Overtime) AND Hours Paid <> 0
+   - Excludes adjustment entries where hours paid is zero
+   - Returns 0 if null
+
+9. Reg Overtime Adjustment Paid
+   - Sum of Gross Pay (P0618.GPA) where PDBA Code in {100, 101, 105} (Regular Overtime codes) AND Hours Paid = 0
+   - Captures adjustment payments with no corresponding hours
+   - Returns 0 if null
+
+10. Dbl Overtime Adjustment Paid
+    - Sum of Gross Pay (P0618.GPA) where PDBA Code = 102 (Double Overtime) AND Hours Paid = 0
+    - Captures adjustment payments with no corresponding hours
+    - Returns 0 if null
+
+TAX REDUCTION CALCULATIONS:
+---------------------------
+
+11. OT Tax Red Hours
+    - Formula: MAX(Hours Worked - 40, 0)
+    - Hours over 40 that qualify for tax reduction
+    - Returns 0 if Hours Worked is null or less than 40
+
+12. Tax Red Reg OT
+    - Formula: IF Reg Overtime Hours Paid = 0 THEN 0
+               ELSE (OT Tax Red Hours / Reg Overtime Hours Paid) × Reg Overtime Paid × 0.3333
+    - Proportional regular overtime tax reduction (33.33% factor)
+    - Returns 0 if null or if no regular OT hours paid
+
+13. Tax Red DT Hours
+    - Formula: MAX(OT Tax Red Hours - Reg Overtime Hours Paid, 0)
+    - Excess hours beyond regular OT that qualify for double-time tax reduction
+    - Returns 0 if result would be negative
+
+14. Tax Red DT
+    - Formula: IF Dbl Overtime Paid = 0 THEN 0
+               ELSE (Tax Red DT Hours / Dbl Overtime Hours Paid) × Dbl Overtime Paid × 0.25
+    - Proportional double-time tax reduction (25% factor)
+    - Returns 0 if null or if no double OT paid
+
+15. Tax Red $ Total
+    - Formula: Tax Red Reg OT + Tax Red DT
+              + (Reg Overtime Adjustment Paid × 0.3333)
+              + (Dbl Overtime Adjustment Paid × 0.25)
+    - Combines proportional tax reductions and adjustment amounts with their respective factors
+    - All terms coalesce nulls to 0
+
+KEY REFERENCE CODES:
+--------------------
+- PDBA Code 100 = Regular Overtime variant
+- PDBA Code 101 = Regular Overtime
+- PDBA Code 102 = Double Overtime
+- PDBA Code 105 = Regular Overtime variant
+- PDBA Code 8999 = Timecard transaction type for actual hours worked lookup
+
+IMPORTANT NOTES:
+----------------
+- Hours Worked vs. Hours Paid: "Hours Worked" comes from timecard transactions (F0719),
+  while "Hours Paid" comes from payroll register (P0618)
+- All null values are coalesced to 0 to prevent null propagation in calculations
+- Tax reduction calculations use Hours Paid as the denominator (not Hours Worked)
+- Adjustment columns (9 & 10) capture payroll corrections where pay exists but hours paid = 0
+- Regular paid columns (7 & 8) exclude these adjustments for accurate rate calculations
+- The PayTypes table acts as a filter to identify which PDBA codes represent actual work
+- Regular Overtime aggregations (columns 3, 5, 7, 9) now include PDBA codes 100, 101, and 105
+
+UPDATED 2025-12-04:
+-------------------
+Regular Overtime columns expanded to include PDBA codes 100 and 105 in addition to 101:
+- Columns 3, 5, 7, 9 (Reg Overtime Hours Paid, Reg Overtime Hours Worked, 
+  Reg Overtime Paid, Reg Overtime Adjustment Paid)
+- Filter condition: List.Contains({100, 101, 105}, PDBA Code)

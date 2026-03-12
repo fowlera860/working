@@ -1,0 +1,5 @@
+let
+    Source = Excel.CurrentWorkbook(){[Name="Job_Codes"]}[Content],
+    #"Changed Type" = Table.TransformColumnTypes(Source,{{"EEO Job Code", Int64.Type}, {"CA Job Code", Int64.Type}, {"EEO Job", type text}})
+in
+    #"Changed Type"

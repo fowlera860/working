@@ -1,0 +1,92 @@
+let
+    Selected_Contract = Excel.CurrentWorkbook(){[Name="Selected_Contract"]}[Content]{0}[Column1],
+    Selected_Months =
+        List.Distinct(
+            List.RemoveNulls(
+                List.Combine(
+                    Table.ToColumns(
+                        Excel.CurrentWorkbook(){[Name="Selected_Months"]}[Content]
+                    )
+                )
+            )
+        ),
+    Type_Filters = Table.ToList(Excel.CurrentWorkbook(){[Name="Type_Filters"]}[Content]),
+    Transaction_Code_Filters = Table.ToList(Excel.CurrentWorkbook(){[Name="Transaction_Code_Filters"]}[Content]),
+    Source = AnalysisServices.Databases("dixiedw", [TypedMeasureColumns=true, Implementation="2.0"]),
+    RebateAnalysis = Source{[Name="RebateAnalysis"]}[Data],
+    #"Rebate Cube1" = RebateAnalysis{[Id="Rebate Cube"]}[Data],
+    #"Rebate Cube2" = #"Rebate Cube1"{[Id="Rebate Cube"]}[Data],
+    #"Added Items" = Cube.Transform(#"Rebate Cube2",
+        {
+            {Cube.AddAndExpandDimensionColumn, "[Accrual Calendar]", {"[Accrual Calendar].[Month].[Month]"}, {"Accrual Calendar.Month"}},
+            {Cube.AddAndExpandDimensionColumn, "[Customers]", {"[Customers].[Customer].[Customer]"}, {"Customers.Customer"}},
+            {Cube.AddAndExpandDimensionColumn, "[Products]", {"[Products].[Product Category].[Product Category]", "[Products].[Selling Color].[Selling Color]", "[Products].[Selling Style].[Selling Style]"}, {"Products.Product Category", "Products.Selling Color", "Products.Selling Style"}},
+            {Cube.AddAndExpandDimensionColumn, "[Rebate Contracts]", {"[Rebate Contracts].[Contract].[Contract]", "[Rebate Contracts].[Type].[Type]"}, {"Rebate Contracts.Contract", "Rebate Contracts.Type"}},
+            {Cube.AddAndExpandDimensionColumn, "[Rebates Ledger]", {"[Rebates Ledger].[Invoice].[Invoice]", "[Rebates Ledger].[Invoice Date].[Invoice Date]", "[Rebates Ledger].[Transaction Code].[Transaction Code]"}, {"Rebates Ledger.Invoice", "Rebates Ledger.Invoice Date", "Rebates Ledger.Transaction Code"}},
+            {Cube.AddAndExpandDimensionColumn, "[Sales Force - Contract]", {"[Sales Force - Contract].[Contract Brand].[Contract Brand]"}, {"Sales Force - Contract.Contract Brand"}},
+            {Cube.AddMeasureColumn, "Accrual Amount", "[Measures].[Accrual Amount]"},
+            {Cube.AddMeasureColumn, "Accrual Rate", "[Measures].[Accrual Rate]"},
+            {Cube.AddMeasureColumn, "Net Sales", "[Measures].[Net Sales]"},
+            {Cube.AddMeasureColumn, "Sqyds-Units", "[Measures].[Sqyds-Units]"}
+        }),
+    FilteredContracts = Table.SelectRows(#"Added Items", each [Rebate Contracts.Contract] = Selected_Contract),
+    FilteredMonths = Table.SelectRows(FilteredContracts, each List.Contains(Selected_Months,[Accrual Calendar.Month])),
+    FilteredTransactions = Table.SelectRows(FilteredMonths, each List.Contains(Transaction_Code_Filters,[Rebates Ledger.Transaction Code])),
+    FilteredTypes = Table.SelectRows(FilteredTransactions, each List.Contains(Type_Filters,[Rebate Contracts.Type])),
+    #"Reordered Columns" = Table.ReorderColumns(FilteredTypes,{"Rebate Contracts.Contract", "Rebate Contracts.Type", "Rebates Ledger.Transaction Code", "Accrual Calendar.Month", "Customers.Customer", "Rebates Ledger.Invoice Date", "Rebates Ledger.Invoice", "Products.Selling Style", "Products.Selling Color", "Products.Product Category", "Sales Force - Contract.Contract Brand", "Sqyds-Units", "Net Sales", "Accrual Rate", "Accrual Amount"}),
+    #"Removed Columns" = Table.RemoveColumns(#"Reordered Columns",{"Rebate Contracts.Contract", "Rebate Contracts.Type", "Rebates Ledger.Transaction Code", "Accrual Calendar.Month"}),
+    #"Split Column by Delimiter" = Table.SplitColumn(#"Removed Columns", "Customers.Customer", Splitter.SplitTextByEachDelimiter({" - "}, QuoteStyle.Csv, false), {"Customer Number", "Customer Name"}),
+    #"Converted Invoice Date" =
+    Table.TransformColumns(
+        #"Split Column by Delimiter",
+        {
+            "Rebates Ledger.Invoice Date",
+            each
+                let
+                    val = Text.PadStart(Text.From(_), 6, "0"),
+                    month = Number.FromText(Text.Start(val, Text.Length(val) - 4)),
+                    day = Number.FromText(Text.Middle(val, Text.Length(val) - 4, 2)),
+                    year = Number.FromText(Text.End(val, 2)),
+                    fullYear = if year < 30 then 2000 + year else 1900 + year,
+                    dateVal = #date(fullYear, month, day)
+                in
+                    dateVal,
+            type date
+        }
+    ),
+    #"Changed Type" = Table.TransformColumnTypes(#"Converted Invoice Date",{{"Customer Number", Int64.Type}, {"Customer Name", type text}}),
+
+    #"Renamed Columns" = Table.RenameColumns(#"Changed Type",{{"Rebates Ledger.Invoice Date", "Invoice Date"}, {"Rebates Ledger.Invoice", "Invoice"}, {"Products.Selling Style", "Selling Style"}, {"Products.Selling Color", "Selling Color"}, {"Products.Product Category", "Product Category"}, {"Sales Force - Contract.Contract Brand", "Contract Brand"}}),
+    #"Reordered Columns1" = Table.ReorderColumns(#"Renamed Columns",{"Customer Name", "Customer Number", "Invoice Date", "Invoice", "Selling Style", "Selling Color", "Product Category", "Contract Brand", "Sqyds-Units", "Net Sales", "Accrual Rate", "Accrual Amount"}),
+    #"Sorted Rows" = Table.Sort(#"Reordered Columns1",{{"Customer Name", Order.Ascending}, {"Invoice Date", Order.Ascending}}),
+    MeasuresList = {"Sqyds-Units", "Net Sales", "Accrual Rate", "Accrual Amount"},
+    Grouped = Table.Group(#"Sorted Rows", {"Customer Name"}, {{"AllRows", each _, type table}}),
+    AddedTotals = Table.AddColumn(Grouped, "WithTotals", each
+        let
+            t = [AllRows],
+            cols = Table.ColumnNames(t),
+            cust = [Customer Name],
+            totalValues = List.Transform(cols, (c) =>
+                let
+                    vals = List.RemoveNulls(Table.Column(t, c))
+                in
+                    if c = "Customer Name" then "Total - " & cust
+                    else if List.Contains(MeasuresList, c) then
+                        if c = "Accrual Rate" then
+                            if List.Count(vals) = 0 then null else List.Average(vals)
+                        else
+                            if List.Count(vals) = 0 then null else List.Sum(vals)
+                    else
+                        null
+            ),
+            totalRecord = Record.FromList(totalValues, cols),
+            totalTable = Table.FromRecords({totalRecord}, cols),
+            blankRecord = Record.FromList(List.Transform(cols, each null), cols),
+            blankTable = Table.FromRecords({blankRecord}, cols),
+            combined = Table.Combine({t, totalTable, blankTable})
+        in
+            combined
+    ),
+    #"With Subtotals" = Table.Combine(AddedTotals[WithTotals])
+in
+    #"With Subtotals"

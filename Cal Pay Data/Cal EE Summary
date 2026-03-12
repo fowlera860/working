@@ -1,0 +1,29 @@
+let
+    Source = Table.NestedJoin(#"EE Data", {"Address Number"}, #"CA All EEs", {"Address Number"}, "CA All EEs", JoinKind.Inner),
+    #"Removed Columns" = Table.RemoveColumns(Source,{"CA All EEs"}),
+    #"Grouped Rows" = Table.Group(#"Removed Columns", {"Address Number", "Alpha Name", "Worked Weeks", "Business Unit", "Establishment", "Home Business Unit", "Home Business Unit_2", "Sex ", "EEO Job", "EEO Job_3", "EEO Min", "EEO Min_4", "F0116 ADDS", "Date Started", "Date Term.", "Pay Freq", "Medicare Taxable Wages - MCWG", "Emp St", "Employment Status"}, {{"# Paychecks", each Table.RowCount(Table.Distinct(Table.SelectColumns(_, {"Check Date"}))), Int64.Type}, {"Total Hours", each List.Sum([#"Hours "]), type nullable number}}),
+    #"Added Pay Band" = Table.AddColumn(#"Grouped Rows", "CA Pay Band Code", each List.First(
+        Table.SelectRows(PayBand_Codes, 
+            (row) => [#"Medicare Taxable Wages - MCWG"] >= row[#"W2 - Box 5  Medicare wages 2022 Min"] 
+                  and [#"Medicare Taxable Wages - MCWG"] <= row[#"W2 - Box 5  Medicare wages 2022 Max"]
+        )[#"CA Pay Band Code"], 
+        null
+    )),
+    #"Added Job Code" = Table.AddColumn(#"Added Pay Band", "CA Job Code", each List.First(
+    Table.SelectRows(Job_Codes, 
+        (row) => row[#"EEO Job Code"] = [#"EEO Job"]
+    )[#"CA Job Code"], 
+    null
+)),
+    #"Added Demo Code" = Table.AddColumn(#"Added Job Code", "CA Demo Code", each List.First(
+    Table.SelectRows(Demo_Codes, 
+        (row) => row[#"Sex "] = [#"Sex "] and row[#"EEO Min Code"] = [#"EEO Min"]
+    )[#"CA Code Race Ethnicity Sex"], 
+    null
+)),
+    #"Added Custom" = Table.AddColumn(#"Added Demo Code", "Emp Status", each if [Employment Status] = "Salary Exempt" then "Exempt" else "Non-exempt"),
+    #"Reordered Columns" = Table.ReorderColumns(#"Added Custom",{"Address Number", "Alpha Name", "Business Unit", "Establishment", "Home Business Unit", "Home Business Unit_2", "Sex ", "EEO Job", "EEO Job_3", "EEO Min", "EEO Min_4", "F0116 ADDS", "Date Started", "Date Term.", "Pay Freq", "Medicare Taxable Wages - MCWG", "Emp St", "Employment Status", "Emp Status", "# Paychecks", "Total Hours", "CA Pay Band Code", "CA Job Code", "CA Demo Code"}),
+    #"Removed Columns1" = Table.RemoveColumns(#"Reordered Columns",{"Employment Status"}),
+    #"Added Custom1" = Table.AddColumn(#"Removed Columns1", "Hour Worked", each if [EEO Job_3]= "Sales Workers" then [#"# Paychecks"] * 86.67 else [Total Hours])
+in
+    #"Added Custom1"

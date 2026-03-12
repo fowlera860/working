@@ -1,0 +1,5 @@
+let
+    Source = 6
+
+in
+    Source
