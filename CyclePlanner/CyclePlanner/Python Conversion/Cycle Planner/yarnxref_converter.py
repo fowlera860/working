@@ -52,7 +52,7 @@ WHERE
     return query
 
 def fetch_yarnxref(planning_groups_df: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """Fetch yarn cross reference data from database"""
+    """Fetch yarn cross reference data from database."""
     try:
         db_server = config['database']['server']
         db_name = config['database']['database']
@@ -75,6 +75,7 @@ def fetch_yarnxref(planning_groups_df: pd.DataFrame, config: dict) -> pd.DataFra
         print(f"Error connecting to database: {e}")
         print("Returning empty DataFrame")
         return pd.DataFrame()
+
 
 def main():
     """Main execution"""
@@ -134,6 +135,7 @@ def main():
     print(yarnxref_df.head(10))
     print("\nColumn info:")
     print(yarnxref_df.dtypes)
+
 
 if __name__ == "__main__":
     main()

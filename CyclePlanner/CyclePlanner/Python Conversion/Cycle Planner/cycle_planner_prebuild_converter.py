@@ -165,12 +165,12 @@ def build_master_dataset(data: dict, planning_groups_df: pd.DataFrame) -> pd.Dat
             'PendingProd': 'sum',
             'RsvQty': 'sum'
         }).reset_index()
-        asg_summary.rename(columns={'PendingProd': 'AsgQty', 'RsvQty': 'ReservedQty'}, inplace=True)
+        asg_summary.rename(columns={'PendingProd': 'AsgQty LF', 'RsvQty': 'ReservedQty LF'}, inplace=True)
         result = result.merge(asg_summary, on=join_keys, how='left')
-        print(f"  + Added AsgQty and ReservedQty")
+        print(f"  + Added AsgQty LF and ReservedQty LF")
     else:
-        result['AsgQty'] = 0
-        result['ReservedQty'] = 0
+        result['AsgQty LF'] = 0
+        result['ReservedQty LF'] = 0
     
     # 2. Calculate B/O from UnassignedMillOrders
     unassigned = data['mill_orders'][data['mill_orders']['Src'] == 'Unassigned'].copy()
@@ -187,30 +187,37 @@ def build_master_dataset(data: dict, planning_groups_df: pd.DataFrame) -> pd.Dat
             axis=1
         )
         bo_summary = unassigned.groupby(join_keys)['Calc'].sum().reset_index()
-        bo_summary.rename(columns={'Calc': 'B/O'}, inplace=True)
+        bo_summary.rename(columns={'Calc': 'B/O LF'}, inplace=True)
+        max_bo_summary = unassigned.groupby(join_keys)['Calc'].max().reset_index()
+        max_bo_summary.rename(columns={'Calc': 'Max BO Order LF'}, inplace=True)
         result = result.merge(bo_summary, on=join_keys, how='left')
-        print(f"  + Added B/O")
+        result = result.merge(max_bo_summary, on=join_keys, how='left')
+        print(f"  + Added B/O LF and Max BO Order LF")
     else:
-        result['B/O'] = 0
+        result['B/O LF'] = 0
+        result['Max BO Order LF'] = 0
     
-    # 3. Calculate OnHand from Inventory
+    # 3. Calculate Inv LF from Inventory
     if not data['inventory'].empty:
         # Check which column name is used (Feet or FeetAvailable)
         feet_col = 'Feet' if 'Feet' in data['inventory'].columns else 'FeetAvailable'
         if feet_col not in data['inventory'].columns:
             print(f"  ⚠ Warning: Neither 'Feet' nor 'FeetAvailable' found in inventory")
             print(f"    Available columns: {data['inventory'].columns.tolist()}")
-            result['OnHand'] = 0
+            result['Inv LF'] = 0
         else:
-            inventory_summary = data['inventory'].groupby(join_keys)[feet_col].sum().reset_index()
-            inventory_summary.rename(columns={feet_col: 'OnHand'}, inplace=True)
-            result = result.merge(inventory_summary, on=join_keys, how='left')
-            print(f"  + Added OnHand")
+            # Compute both total (Inv LF) and largest single roll (Max Roll LF) in one pass
+            inventory_agg = data['inventory'].groupby(join_keys)[feet_col].agg(['sum', 'max']).reset_index()
+            inventory_agg.columns = join_keys + ['Inv LF', 'Max Roll LF']
+            result = result.merge(inventory_agg, on=join_keys, how='left')
+            print(f"  + Added Inv LF and Max Roll LF")
     else:
-        result['OnHand'] = 0
+        result['Inv LF'] = 0
+        result['Max Roll LF'] = 0
     
-    # Replace null OnHand with 0
-    result['OnHand'] = result['OnHand'].fillna(0)
+    # Replace null values with 0
+    result['Inv LF'] = result['Inv LF'].fillna(0)
+    result['Max Roll LF'] = result['Max Roll LF'].fillna(0)
     
     # 4. Merge Sales Forecast (keep all week columns)
     if not data['sales_forecast'].empty:
@@ -290,7 +297,7 @@ def add_time_phased_inventory(df: pd.DataFrame) -> pd.DataFrame:
     sh_cols = [f'SH W {i:02d}' for i in range(1, TIME_PHASE_WEEKS + 1)]
     week_cols = [f'Week {i:02d}' for i in range(1, TIME_PHASE_WEEKS + 1)]
 
-    for col in ['OnHand', 'B/O', 'ReservedQty', 'AsgQty', 'Total Production']:
+    for col in ['Inv LF', 'B/O LF', 'ReservedQty LF', 'AsgQty LF', 'Open Tuft LF']:
         if col in df.columns:
             df[col] = coerce_numeric_series(df[col]).fillna(0)
     
@@ -306,21 +313,21 @@ def add_time_phased_inventory(df: pd.DataFrame) -> pd.DataFrame:
     # Calculate time-phased inventory for each row
     time_phase_results = []
     for idx, row in df.iterrows():
-        has_total_production = 'Total Production' in df.columns
-        if has_total_production:
+        has_open_tuft = 'Open Tuft LF' in df.columns
+        if has_open_tuft:
             on_hand = (
-                row.get('OnHand', 0)
-                + row.get('Total Production', 0)
-                - row.get('B/O', 0)
-                - row.get('ReservedQty', 0)
-                - row.get('AsgQty', 0)
+                row.get('Inv LF', 0)
+                + row.get('Open Tuft LF', 0)
+                - row.get('B/O LF', 0)
+                - row.get('ReservedQty LF', 0)
+                - row.get('AsgQty LF', 0)
             )
         else:
-            on_hand = row.get('OnHand', 0)
+            on_hand = row.get('Inv LF', 0)
         
         # Get forecast, production, and shipments as dictionaries
         forecast_row = {col: row.get(col, 0) for col in fc_cols}
-        if has_total_production:
+        if has_open_tuft:
             production_row = {col: 0 for col in pd_cols}
             shipments_row = {col: 0 for col in sh_cols}
         else:
@@ -365,20 +372,56 @@ def add_calculated_metrics(df: pd.DataFrame) -> pd.DataFrame:
     df['Avg Forecast Lbs'] = df['Avg Forecast'] * FORECAST_LF_TO_SY_FACTOR * (df['FaceWt'] / 16)
     print(f"  + Added Avg Forecast Lbs")
     
-    # Calculate Total Production (sum of PD W 01...20)
+    # Calculate Open Tuft LF (sum of PD W 01...20)
     pd_cols = [f'PD W {i:02d}' for i in range(1, TIME_PHASE_WEEKS + 1)]
     existing_pd_cols = [col for col in pd_cols if col in df.columns]
     if existing_pd_cols:
         for col in existing_pd_cols:
             df[col] = coerce_numeric_series(df[col])
-        df['Total Production'] = df[existing_pd_cols].sum(axis=1)
-        print(f"  + Added Total Production")
+        df['Open Tuft LF'] = df[existing_pd_cols].sum(axis=1)
+        print(f"  + Added Open Tuft LF")
     else:
-        df['Total Production'] = 0
+        df['Open Tuft LF'] = 0
     
     return df
 
-def add_recommendations(df: pd.DataFrame, minimum_weeks: float, target_weeks: float) -> pd.DataFrame:
+def assign_run_size(avg_forecast_lbs: float, default_run_sizes: dict) -> tuple[str, float]:
+    """
+    Return (run_size_name, run_size_lbs) for a color group based on its weekly forecast in lbs.
+
+    Parameters
+    ----------
+    avg_forecast_lbs : float
+        Total weekly forecast in lbs for the color group (sum of Avg Forecast Lbs).
+    default_run_sizes : dict
+        Mapping of tier names to config dicts, each containing:
+          - 'run_size_lbs'  : run size in pounds (float)
+          - 'lbs_week_min'  : minimum weekly lbs threshold (inclusive)
+          - 'lbs_week_max'  : maximum weekly lbs threshold (inclusive), or None for no upper bound
+
+    Returns
+    -------
+    tuple[str, float]
+        (run_size_name, run_size_lbs) for the first matching tier, or the lowest tier as fallback.
+
+    Tiers are evaluated from highest to lowest lbs_week_min so the first match wins.
+    """
+    sorted_tiers = sorted(
+        default_run_sizes.items(),
+        key=lambda item: item[1].get('lbs_week_min', 0),
+        reverse=True
+    )
+    for name, cfg in sorted_tiers:
+        min_val = cfg.get('lbs_week_min', 0) or 0
+        max_val = cfg.get('lbs_week_max')
+        if avg_forecast_lbs >= min_val and (max_val is None or avg_forecast_lbs <= max_val):
+            return name, float(cfg['run_size_lbs'])
+    # Fallback: use lowest tier
+    fallback_name, fallback_cfg = sorted_tiers[-1]
+    return fallback_name, float(fallback_cfg['run_size_lbs'])
+
+
+def add_recommendations(df: pd.DataFrame, minimum_weeks: float, target_weeks: float, default_run_sizes: dict) -> pd.DataFrame:
     """Add recommendation logic and related metrics."""
     if df.empty:
         return df
@@ -388,32 +431,95 @@ def add_recommendations(df: pd.DataFrame, minimum_weeks: float, target_weeks: fl
     if 'ColorGroup_x' in updated.columns and 'ColorGroup' not in updated.columns:
         updated = updated.rename(columns={'ColorGroup_x': 'ColorGroup'})
 
-    for col in ['AsgQty', 'ReservedQty', 'B/O', 'OnHand', 'Total Production', 'Avg Forecast', 'RollSize', 'FaceWt']:
+    for col in ['AsgQty LF', 'ReservedQty LF', 'B/O LF', 'Inv LF', 'Open Tuft LF', 'Avg Forecast', 'Avg Forecast Lbs', 'RollSize', 'FaceWt']:
         if col in updated.columns:
             updated[col] = coerce_numeric_series(updated[col]).fillna(0)
 
-    position_numerator = (
-        updated['OnHand']
-        + updated['Total Production']
-        - updated['B/O']
-        - updated['ReservedQty']
-        - updated['AsgQty']
+    inv_pos_lf_numerator = (
+        updated['Inv LF']
+        + updated['Open Tuft LF']
+        - updated['B/O LF']
+        - updated['ReservedQty LF']
+        - updated['AsgQty LF']
     )
-    updated['Position'] = np.where(updated['Avg Forecast'] == 0, 0, position_numerator / updated['Avg Forecast'])
+    updated['Inv Pos (LF)'] = inv_pos_lf_numerator
+    # Convert LF to lbs: LF * (9/12 SY/LF) * (FaceWt oz/SY) / (16 oz/lb)
+    updated['Inv Pos (Lbs)'] = updated['Inv Pos (LF)'] * FORECAST_SY_TO_LF_FACTOR * updated['FaceWt'] / 16
+    updated['Inv Pos (Wks)'] = np.where(updated['Avg Forecast'] == 0, 0, inv_pos_lf_numerator / updated['Avg Forecast'])
+
+    # --- Color group metrics ---
+    # Calculate Color Inv Pos (Wks) and run-size columns per (PlanningGroup, ColorGroup)
+    group_keys = ['PlanningGroup', 'ColorGroup']
+    if all(k in updated.columns for k in group_keys):
+        cg_agg = updated.groupby(group_keys, dropna=False).agg(
+            _sum_inv_pos_lbs=('Inv Pos (Lbs)', 'sum'),
+            _sum_avg_fc_lbs=('Avg Forecast Lbs', 'sum'),
+        ).reset_index()
+        cg_agg['ColorGroup.Color Inv Pos (Wks)'] = np.where(
+            cg_agg['_sum_avg_fc_lbs'] == 0,
+            0,
+            cg_agg['_sum_inv_pos_lbs'] / cg_agg['_sum_avg_fc_lbs']
+        )
+
+        # Assign run size based on sum(Avg Forecast Lbs) per color group
+        run_size_names = []
+        run_size_lbs_vals = []
+        tufting_prod_sizes = []
+        cg_target_weeks = []
+        for _, row in cg_agg.iterrows():
+            sum_fc_lbs = row['_sum_avg_fc_lbs']
+            rs_name, rs_lbs = assign_run_size(sum_fc_lbs, default_run_sizes)
+            run_size_names.append(rs_name)
+            run_size_lbs_vals.append(rs_lbs)
+            # Double the run size if the default run size covers fewer weeks than target
+            if sum_fc_lbs > 0 and (rs_lbs / sum_fc_lbs) < target_weeks:
+                tps = rs_lbs * 2
+            else:
+                tps = rs_lbs
+            tufting_prod_sizes.append(tps)
+            # target_weeks per color group
+            cg_tw = (tps / sum_fc_lbs) if sum_fc_lbs > 0 else target_weeks
+            cg_target_weeks.append(cg_tw)
+
+        cg_agg['ColorGroup.Run Size'] = run_size_names
+        cg_agg['ColorGroup.Run Size (Lbs)'] = run_size_lbs_vals
+        cg_agg['ColorGroup.tufting_production_size'] = tufting_prod_sizes
+        cg_agg['ColorGroup.target_weeks'] = cg_target_weeks
+
+        cg_merge_cols = group_keys + ['ColorGroup.Color Inv Pos (Wks)', 'ColorGroup.Run Size', 'ColorGroup.Run Size (Lbs)', 'ColorGroup.tufting_production_size', 'ColorGroup.target_weeks']
+        updated = updated.merge(cg_agg[cg_merge_cols], on=group_keys, how='left')
+
+        # Sort ColorGroups within each PlanningGroup by ColorGroup.Color Inv Pos (Wks) ascending
+        updated = (
+            updated
+            .sort_values(
+                ['PlanningGroup', 'ColorGroup.Color Inv Pos (Wks)', 'ColorGroup', 'Style', 'Color', 'Size', 'Back'],
+                ascending=True,
+                na_position='last'
+            )
+            .reset_index(drop=True)
+        )
+    else:
+        updated['ColorGroup.Color Inv Pos (Wks)'] = 0.0
+        updated['ColorGroup.Run Size'] = ''
+        updated['ColorGroup.Run Size (Lbs)'] = 0.0
+        updated['ColorGroup.tufting_production_size'] = 0.0
+        updated['ColorGroup.target_weeks'] = target_weeks
 
     def compute_group_recommendations(group: pd.DataFrame) -> pd.DataFrame:
         group = group.copy().reset_index(drop=True)
         group['RowId'] = range(len(group))
-        group['Recommened'] = 0.0
+        group['Recommended LF'] = 0.0
+        group['Recommended Rolls'] = 0
 
         def recompute_metrics(local_df: pd.DataFrame) -> pd.DataFrame:
             available = (
-                local_df['OnHand']
-                + local_df['Total Production']
-                - local_df['B/O']
-                - local_df['ReservedQty']
-                - local_df['AsgQty']
-                + local_df['Recommened']
+                local_df['Inv LF']
+                + local_df['Open Tuft LF']
+                - local_df['B/O LF']
+                - local_df['ReservedQty LF']
+                - local_df['AsgQty LF']
+                + local_df['Recommended LF']
             )
             local_df['Updated Position'] = np.where(
                 local_df['Avg Forecast'] == 0,
@@ -427,28 +533,46 @@ def add_recommendations(df: pd.DataFrame, minimum_weeks: float, target_weeks: fl
         if not eligible.any():
             return group.drop(columns=['RowId'])
 
-        min_position = group.loc[eligible, 'Position'].min()
-        if pd.isna(min_position) or min_position >= minimum_weeks:
+        min_position = group.loc[eligible, 'Inv Pos (Wks)'].min()
+
+        # Force a week-1 production cycle if any eligible SKU has an individual
+        # backorder line larger than its biggest physical roll on hand.
+        force_trigger = False
+        if 'Max BO Order LF' in group.columns and 'Max Roll LF' in group.columns:
+            effective_bo = np.minimum(
+                group.loc[eligible, 'Max BO Order LF'].fillna(0),
+                group.loc[eligible, 'RollSize'].fillna(0)
+            )
+            force_trigger = (effective_bo > group.loc[eligible, 'Max Roll LF'].fillna(0)).any()
+
+        if (pd.isna(min_position) or min_position >= minimum_weeks) and not force_trigger:
             return group.drop(columns=['RowId'])
+
+        # tufting_production_size is the sole driver of total production for a cycle.
+        # Fill rolls to the lowest-position SKU until the color group's total
+        # recommended lbs reaches tufting_production_size.
+        if 'ColorGroup.tufting_production_size' not in group.columns or 'FaceWt' not in group.columns:
+            return group.drop(columns=['RowId'])
+
+        tufting_prod_size = float(group['ColorGroup.tufting_production_size'].iloc[0])
+        if tufting_prod_size <= 0:
+            return group.drop(columns=['RowId'])
+
+        def calc_total_rec_lbs(local_df: pd.DataFrame) -> float:
+            return (local_df['Recommended LF'] * FORECAST_LF_TO_SY_FACTOR * local_df['FaceWt'] / 16).sum()
 
         max_iterations = 10000
         iterations = 0
-        while iterations < max_iterations:
+        total_rec_lbs = calc_total_rec_lbs(group)
+        while total_rec_lbs < tufting_prod_size and iterations < max_iterations:
             eligible = group['Avg Forecast'] != 0
             if not eligible.any():
                 break
-
-            min_updated = group.loc[eligible, 'Updated Position'].min()
-            if pd.isna(min_updated) or min_updated > target_weeks:
-                break
-
-            candidates = group.loc[eligible & (group['Updated Position'] == min_updated)]
-            if candidates.empty:
-                break
-
-            idx = candidates.index[0]
-            group.loc[idx, 'Recommened'] = group.loc[idx, 'Recommened'] + group.loc[idx, 'RollSize']
+            idx = group.loc[eligible, 'Updated Position'].idxmin()
+            group.loc[idx, 'Recommended LF'] = group.loc[idx, 'Recommended LF'] + group.loc[idx, 'RollSize']
+            group.loc[idx, 'Recommended Rolls'] = group.loc[idx, 'Recommended Rolls'] + 1
             group = recompute_metrics(group)
+            total_rec_lbs = calc_total_rec_lbs(group)
             iterations += 1
 
         return group.drop(columns=['RowId'])
@@ -456,10 +580,24 @@ def add_recommendations(df: pd.DataFrame, minimum_weeks: float, target_weeks: fl
     if 'PlanningGroup' in updated.columns and 'ColorGroup' in updated.columns:
         updated = updated.groupby(['PlanningGroup', 'ColorGroup'], group_keys=False).apply(compute_group_recommendations)
     else:
-        updated['Recommened'] = 0
-        updated['Updated Position'] = updated.get('Position', 0)
+        updated['Recommended LF'] = 0
+        updated['Recommended Rolls'] = 0
 
-    updated['RecommendedLbs'] = updated['Recommened'] * FORECAST_LF_TO_SY_FACTOR * (updated['FaceWt'] / 16)
+    # Recompute Updated Position vectorially — columns created inside groupby.apply
+    # are not always reliably preserved across pandas versions.
+    _available = (
+        updated['Inv LF']
+        + updated['Open Tuft LF']
+        - updated['B/O LF']
+        - updated['ReservedQty LF']
+        - updated['AsgQty LF']
+        + updated['Recommended LF']
+    )
+    updated['Updated Position'] = np.where(
+        updated['Avg Forecast'] == 0, 0, _available / updated['Avg Forecast']
+    )
+
+    updated['RecommendedLbs'] = updated['Recommended LF'] * FORECAST_LF_TO_SY_FACTOR * (updated['FaceWt'] / 16)
     return updated
 
 
@@ -490,15 +628,21 @@ def build_projected_production(
         if col not in updated.columns:
             updated[col] = ''
 
-    numeric_cols = ['Avg Forecast', 'RollSize', 'Recommened', 'Position'] + week_cols
+    numeric_cols = ['Avg Forecast', 'RollSize', 'Recommended LF', 'Inv Pos (Wks)'] + week_cols
     for col in numeric_cols:
         if col not in updated.columns:
             updated[col] = 0
         updated[col] = coerce_numeric_series(updated[col]).fillna(0)
 
+    # Ensure per-row ColorGroup.target_weeks is available; fall back to global value
+    if 'ColorGroup.target_weeks' not in updated.columns:
+        updated['ColorGroup.target_weeks'] = target_weeks
+    else:
+        updated['ColorGroup.target_weeks'] = coerce_numeric_series(updated['ColorGroup.target_weeks']).fillna(target_weeks)
+
     tufting_orders = updated.loc[
-        updated['Recommened'] > 0,
-        ['PlanningGroup', 'ColorGroup', 'Style', 'Color', 'Size', 'Back', 'Position', 'Recommened']
+        updated['Recommended LF'] > 0,
+        ['PlanningGroup', 'ColorGroup', 'Style', 'Color', 'Size', 'Back', 'Inv Pos (Wks)', 'Recommended LF']
     ].copy()
 
     if tufting_orders.empty:
@@ -506,27 +650,33 @@ def build_projected_production(
     else:
         tufting_orders['_RowIdx'] = tufting_orders.index
         tufting_orders['OrderType'] = 'Tufting'
-        tufting_orders['Week #'] = tufting_orders['Position'].apply(position_to_week)
-        tufting_orders['OrderSize'] = coerce_numeric_series(tufting_orders['Recommened']).fillna(0)
+        tufting_orders['Week #'] = tufting_orders['Inv Pos (Wks)'].apply(position_to_week)
+        tufting_orders['OrderSize'] = coerce_numeric_series(tufting_orders['Recommended LF']).fillna(0)
 
-    tufting_week_keys = set()
+        # All SKUs in a color group run together; assign the group's earliest position week to all
+        group_min_week = (
+            tufting_orders.groupby(['PlanningGroup', 'ColorGroup'])['Week #']
+            .min()
+            .reset_index()
+            .rename(columns={'Week #': '_GroupMinWeek'})
+        )
+        tufting_orders = tufting_orders.merge(group_min_week, on=['PlanningGroup', 'ColorGroup'], how='left')
+        tufting_orders['Week #'] = tufting_orders['_GroupMinWeek'].astype(int)
+        tufting_orders.drop(columns=['_GroupMinWeek'], inplace=True)
+
+    # Track which (PlanningGroup, ColorGroup, arrival_week) combos are already scheduled
+    # by tufting orders, so the projection loop doesn't double-schedule them.
+    handled_group_weeks = set()
     if not tufting_orders.empty:
         for _, tufting_order in tufting_orders.iterrows():
-            row_idx = int(tufting_order['_RowIdx'])
             week_num = int(pd.to_numeric(tufting_order['Week #'], errors='coerce')) if pd.notna(tufting_order['Week #']) else 1
-            if week_num < 1:
-                week_num = 1
-            if week_num > TIME_PHASE_WEEKS:
-                week_num = TIME_PHASE_WEEKS
-            tufting_week_keys.add((row_idx, week_num))
+            week_num = max(1, min(week_num, TIME_PHASE_WEEKS))
+            handled_group_weeks.add((tufting_order['PlanningGroup'], tufting_order['ColorGroup'], week_num))
 
     for _, order in tufting_orders.iterrows():
         row_idx = int(order['_RowIdx'])
         week_number = int(pd.to_numeric(order['Week #'], errors='coerce')) if pd.notna(order['Week #']) else 1
-        if week_number < 1:
-            week_number = 1
-        if week_number > TIME_PHASE_WEEKS:
-            week_number = TIME_PHASE_WEEKS
+        week_number = max(1, min(week_number, TIME_PHASE_WEEKS))
         order_size = float(order['OrderSize'])
         if order_size <= 0:
             continue
@@ -535,11 +685,18 @@ def build_projected_production(
     projection_records = []
     group_map = updated.groupby(['PlanningGroup', 'ColorGroup'], dropna=False).groups
 
-    for _, group_indices in group_map.items():
+    for (pg, cg), group_indices in group_map.items():
         group_indices = list(group_indices)
         eligible_indices = [idx for idx in group_indices if updated.at[idx, 'Avg Forecast'] != 0]
         if not eligible_indices:
             continue
+
+        tufting_prod_size = 0.0
+        if 'ColorGroup.tufting_production_size' in updated.columns:
+            tufting_prod_size = float(
+                coerce_numeric_series(pd.Series([updated.at[eligible_indices[0], 'ColorGroup.tufting_production_size']]))
+                .fillna(0).iloc[0]
+            )
 
         for week_number in range(1, TIME_PHASE_WEEKS + 1):
             week_col = week_cols[week_number - 1]
@@ -549,44 +706,56 @@ def build_projected_production(
                 continue
 
             arrival_week_number = min(week_number + lead_time_weeks, TIME_PHASE_WEEKS)
+
+            # Skip if this group+week was already scheduled (by a tufting order or earlier projection)
+            if (pg, cg, arrival_week_number) in handled_group_weeks:
+                continue
+            handled_group_weeks.add((pg, cg, arrival_week_number))
+
+            if tufting_prod_size <= 0:
+                continue
+
             arrival_week_col = week_cols[arrival_week_number - 1]
 
-            for selected_idx in eligible_indices:
-                avg_forecast = float(updated.at[selected_idx, 'Avg Forecast'])
-                roll_size = float(updated.at[selected_idx, 'RollSize'])
+            # Mirror the recommendation logic: fill the lowest-position SKU with rolls
+            # until the group's total recommended lbs reaches tufting_production_size.
+            # All SKUs that receive rolls get the same arrival week number.
+            local_rec = {idx: 0.0 for idx in eligible_indices}
+            max_iter = 10000
+            it = 0
+            while it < max_iter:
+                current_total = sum(
+                    local_rec[idx] * FORECAST_LF_TO_SY_FACTOR * float(updated.at[idx, 'FaceWt']) / 16
+                    for idx in eligible_indices
+                )
+                if current_total >= tufting_prod_size:
+                    break
+                min_idx = min(
+                    eligible_indices,
+                    key=lambda i: (float(updated.at[i, arrival_week_col]) + local_rec[i])
+                                  / max(float(updated.at[i, 'Avg Forecast']), 1e-9)
+                )
+                roll_size = float(updated.at[min_idx, 'RollSize'])
+                if roll_size <= 0:
+                    break
+                local_rec[min_idx] += roll_size
+                it += 1
 
-                if (int(selected_idx), arrival_week_number) in tufting_week_keys:
-                    continue
-
-                if avg_forecast <= 0 or roll_size <= 0:
-                    continue
-
-                current_position = float(updated.at[selected_idx, arrival_week_col]) / avg_forecast
-                if current_position >= target_weeks:
-                    continue
-
-                target_inventory = target_weeks * avg_forecast
-                shortfall = target_inventory - float(updated.at[selected_idx, arrival_week_col])
-                if shortfall <= 0:
-                    continue
-
-                order_count = int(np.ceil(shortfall / roll_size))
-                order_size = order_count * roll_size
+            for idx in eligible_indices:
+                order_size = local_rec[idx]
                 if order_size <= 0:
                     continue
-
-                updated.loc[selected_idx, week_cols[arrival_week_number - 1:]] = (
-                    updated.loc[selected_idx, week_cols[arrival_week_number - 1:]] + order_size
+                updated.loc[idx, week_cols[arrival_week_number - 1:]] = (
+                    updated.loc[idx, week_cols[arrival_week_number - 1:]] + order_size
                 )
-
                 projection_records.append({
                     'OrderType': 'Projection',
-                    'PlanningGroup': updated.at[selected_idx, 'PlanningGroup'],
-                    'ColorGroup': updated.at[selected_idx, 'ColorGroup'],
-                    'Style': updated.at[selected_idx, 'Style'],
-                    'Color': updated.at[selected_idx, 'Color'],
-                    'Size': updated.at[selected_idx, 'Size'],
-                    'Back': updated.at[selected_idx, 'Back'],
+                    'PlanningGroup': pg,
+                    'ColorGroup': cg,
+                    'Style': updated.at[idx, 'Style'],
+                    'Color': updated.at[idx, 'Color'],
+                    'Size': updated.at[idx, 'Size'],
+                    'Back': updated.at[idx, 'Back'],
                     'Week #': arrival_week_number,
                     'OrderSize': order_size
                 })
@@ -669,10 +838,15 @@ def reorder_output_columns(df: pd.DataFrame) -> pd.DataFrame:
     preferred = [
         'PlanningGroup', 'ColorGroup', 'Style', 'StyleName', 'Color', 'ColorName',
         'Size', 'Back', 'RollSize', 'FaceWt', 'MachineNum', 'MachineDescription', 'EPN',
-        'Avg Forecast', 'Avg Forecast Lbs', 'AsgQty', 'ReservedQty', 'B/O', 'Total Production', 'OnHand'
+        'Avg Forecast', 'Avg Forecast Lbs', 'AsgQty LF', 'ReservedQty LF', 'B/O LF', 'Max BO Order LF', 'Open Tuft LF', 'Inv LF', 'Max Roll LF'
     ]
     preferred.extend([f'Week {i:02d}' for i in range(1, TIME_PHASE_WEEKS + 1)])
-    preferred.extend(['Position', 'Recommened', 'Updated Position', 'RecommendedLbs'])
+    preferred.extend([
+        'Inv Pos (Wks)', 'Inv Pos (LF)', 'Inv Pos (Lbs)',
+        'ColorGroup.Color Inv Pos (Wks)', 'ColorGroup.Run Size', 'ColorGroup.Run Size (Lbs)',
+        'ColorGroup.tufting_production_size', 'ColorGroup.target_weeks',
+        'Recommended LF', 'Recommended Rolls', 'Updated Position', 'RecommendedLbs'
+    ])
 
     existing = [col for col in preferred if col in df.columns]
     remaining = [col for col in df.columns if col not in existing]
@@ -750,8 +924,9 @@ def main():
     params = config.get('parameters', {})
     minimum_weeks = params.get('minimum_weeks', 6)
     target_weeks = params.get('target_weeks', 6)
+    default_run_sizes = config.get('default_run_sizes', {})
     print("\nAdding recommendations...")
-    result = add_recommendations(result, minimum_weeks, target_weeks)
+    result = add_recommendations(result, minimum_weeks, target_weeks, default_run_sizes)
 
     # Ensure planning group columns are present after recommendations
     result = ensure_planning_columns(result)
@@ -814,9 +989,13 @@ def main():
         print(f"  Total columns: {len(result.columns)}")
         print(f"  Projected production rows: {len(projected_production)}")
         print(f"  Key metrics calculated:")
-        print(f"    - AsgQty, ReservedQty, B/O, OnHand")
+        print(f"    - AsgQty LF, ReservedQty LF, B/O LF, Inv LF")
         print(f"    - Week 01...Week {TIME_PHASE_WEEKS:02d} (inventory projection)")
-        print(f"    - Avg Forecast, Total Production")
+        print(f"    - Avg Forecast, Open Tuft LF")
+        print(f"    - Inv Pos (Wks), Inv Pos (LF), Inv Pos (Lbs)")
+        print(f"    - ColorGroup.Color Inv Pos (Wks), ColorGroup.Run Size, ColorGroup.Run Size (Lbs)")
+        print(f"    - ColorGroup.tufting_production_size, ColorGroup.target_weeks")
+        print(f"    - Recommended LF, Recommended Rolls")
     else:
         print("✗ Failed to export")
         return

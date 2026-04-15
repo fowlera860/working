@@ -1,4 +1,32 @@
 let
+    calendarDateTable = try Excel.CurrentWorkbook(){[Name="Calendar_Date"]}[Content] otherwise null,
+    dateToTest = if calendarDateTable <> null then Date.From(calendarDateTable{0}[Column1]) else Date.From(DateTime.LocalNow()),
+    // Derive fiscal properties of dateToTest for Is* comparisons
+    testWeekStart = Date.AddDays(dateToTest, -Date.DayOfWeek(dateToTest, Day.Sunday)),
+    testCalYear = Date.Year(testWeekStart),
+    testNextYearStart = Date.AddDays(#date(testCalYear + 1, 1, 1), -Date.DayOfWeek(#date(testCalYear + 1, 1, 1), Day.Sunday)),
+    testFiscalYear = if testWeekStart >= testNextYearStart then testCalYear + 1 else testCalYear,
+    testYearStart = Date.AddDays(#date(testFiscalYear, 1, 1), -Date.DayOfWeek(#date(testFiscalYear, 1, 1), Day.Sunday)),
+    testWeekNumber = Int64.From(Duration.Days(testWeekStart - testYearStart) / 7) + 1,
+    testMonth =
+        if testWeekNumber <= 5 then 1
+        else if testWeekNumber <= 9 then 2
+        else if testWeekNumber <= 13 then 3
+        else if testWeekNumber <= 17 then 4
+        else if testWeekNumber <= 22 then 5
+        else if testWeekNumber <= 26 then 6
+        else if testWeekNumber <= 30 then 7
+        else if testWeekNumber <= 34 then 8
+        else if testWeekNumber <= 39 then 9
+        else if testWeekNumber <= 43 then 10
+        else if testWeekNumber <= 47 then 11
+        else 12,
+    testQuarter =
+        if testMonth <= 3 then 1
+        else if testMonth <= 6 then 2
+        else if testMonth <= 9 then 3
+        else 4,
+
     currentYear = Date.Year(DateTime.LocalNow()),
     StartDate = #date(currentYear - 3, 1, 1),
     EndDate = #date(currentYear + 1, 12, 31),
@@ -116,6 +144,13 @@ let
         else 4, Int64.Type),
     
     // Remove helper columns
-    #"Removed Helper Columns" = Table.RemoveColumns(#"Added Weeks in Month", {"Week Start Date", "Year Start Week"})
+    #"Removed Helper Columns" = Table.RemoveColumns(#"Added Weeks in Month", {"Week Start Date", "Year Start Week"}),
+
+    // Is* columns based on dateToTest
+    #"Added isDay" = Table.AddColumn(#"Removed Helper Columns", "isDay", each if [Date] = dateToTest then true else null, type logical),
+    #"Added isWeek" = Table.AddColumn(#"Added isDay", "isWeek", each if [Year] = testFiscalYear and [#"Week Number"] = testWeekNumber then true else null, type logical),
+    #"Added isMonth" = Table.AddColumn(#"Added isWeek", "isMonth", each if [Year] = testFiscalYear and [Month] = testMonth then true else null, type logical),
+    #"Added isQuarter" = Table.AddColumn(#"Added isMonth", "isQuarter", each if [Year] = testFiscalYear and [Quarter] = testQuarter then true else null, type logical),
+    #"Added isYear" = Table.AddColumn(#"Added isQuarter", "isYear", each if [Year] = testFiscalYear then true else null, type logical)
 in
-    #"Removed Helper Columns"
+    #"Added isYear"

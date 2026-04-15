@@ -35,12 +35,7 @@ Simply run the executable from any location:
 UpdateCyclePlanner.exe
 ```
 
-If you run from Command Prompt and want it to close immediately at the end, use:
-```bash
-UpdateCyclePlanner.exe --no-pause
-```
-
-**Important:** The `config.json` file is bundled into the exe, but the Excel files and export paths in the config still need to be accessible from your network locations.
+The console window will close automatically when the run completes. The full log is saved to the export folder.
 
 ## Troubleshooting
 
@@ -93,6 +88,8 @@ To share the executable:
 2. Ensure ODBC Driver 17+ for SQL Server is installed
 3. Ensure network paths in the bundled config.json are accessible
 4. Run the exe - no Python installation needed!
+
+**Note:** The `config.json` file is bundled into the exe, but the Excel files and export paths in the config still need to be accessible from your network locations.
 
 ## Rebuilding
 

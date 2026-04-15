@@ -39,6 +39,7 @@ import time_phase_production_orders_converter
 import time_phase_shipments_converter
 import cycle_planner_prebuild_converter
 import cycle_planner_yarn_demand_converter
+import cycle_planner_tufting_demand_converter
 
 
 class TeeStream:
@@ -58,15 +59,9 @@ class TeeStream:
         return any(getattr(stream, "isatty", lambda: False)() for stream in self.streams)
 
 
-def should_pause_on_exit() -> bool:
-    """Pause before exit for EXE runs unless explicitly disabled."""
-    return is_frozen and "--no-pause" not in sys.argv
-
-
 def pause_before_exit() -> None:
-    """Keep console open so users can read final output."""
-    if should_pause_on_exit():
-        input("\nPress Enter to close...")
+    """No-op: log is exported to file, console no longer needs to stay open."""
+    pass
 
 
 def start_export_log() -> tuple[Optional[TextIO], Optional[TextIO], Optional[TextIO]]:
@@ -114,6 +109,7 @@ importlib.reload(time_phase_production_orders_converter)
 importlib.reload(time_phase_shipments_converter)
 importlib.reload(cycle_planner_prebuild_converter)
 importlib.reload(cycle_planner_yarn_demand_converter)
+importlib.reload(cycle_planner_tufting_demand_converter)
 
 def print_header(title: str):
     """Print a formatted header"""
@@ -199,7 +195,8 @@ def main():
             # Phase 4: Master Consolidation
             (cycle_planner_prebuild_converter, "CyclePlanner Prebuild (Master)"),
             # Phase 5: Yarn Demand
-            (cycle_planner_yarn_demand_converter, "Cycle Planner Yarn Demand")
+            (cycle_planner_yarn_demand_converter, "Cycle Planner Yarn Demand"),
+            (cycle_planner_tufting_demand_converter, "Cycle Planner Tufting Demand")
         ]
         
         results = {}

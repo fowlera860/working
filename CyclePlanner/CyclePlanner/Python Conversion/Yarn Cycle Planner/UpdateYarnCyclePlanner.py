@@ -9,6 +9,7 @@ import importlib
 import struct
 from pathlib import Path
 from datetime import datetime
+from typing import Optional, TextIO
 
 
 is_frozen = getattr(sys, "frozen", False)
@@ -21,6 +22,59 @@ if str(base_path) not in sys.path:
     sys.path.insert(0, str(base_path))
 
 from utils import load_config, ensure_export_folder
+
+
+class TeeStream:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data):
+        for stream in self.streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self):
+        for stream in self.streams:
+            stream.flush()
+
+    def isatty(self):
+        return any(getattr(stream, "isatty", lambda: False)() for stream in self.streams)
+
+
+def start_export_log() -> tuple[Optional[TextIO], Optional[TextIO], Optional[TextIO]]:
+    try:
+        config = load_config()
+        export_folder = Path(config["paths"]["export_folder"])
+        if not ensure_export_folder(export_folder):
+            print("Warning: Unable to create export folder for log file.")
+            return None, None, None
+
+        log_path = export_folder / "UpdateYarnCyclePlanner.log"
+        log_file = open(log_path, "w", encoding="utf-8")
+
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        sys.stdout = TeeStream(original_stdout, log_file)
+        sys.stderr = TeeStream(original_stderr, log_file)
+
+        print(f"Logging to: {log_path}")
+        return log_file, original_stdout, original_stderr
+    except Exception as e:
+        print(f"Warning: Unable to start run log: {e}")
+        return None, None, None
+
+
+def stop_export_log(
+    log_file: Optional[TextIO],
+    original_stdout: Optional[TextIO],
+    original_stderr: Optional[TextIO],
+) -> None:
+    if original_stdout is not None:
+        sys.stdout = original_stdout
+    if original_stderr is not None:
+        sys.stderr = original_stderr
+    if log_file is not None:
+        log_file.close()
 
 
 def print_header(title: str) -> None:
@@ -128,63 +182,67 @@ def run_converter(module_name: str, label: str) -> bool:
 
 def main() -> None:
     start_time = datetime.now()
-    write_status("updating Yarn Cycle Planner")
+    log_file, original_stdout, original_stderr = start_export_log()
 
-    print_header("Yarn Cycle Planner Update")
-    print(f"Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    try:
+        write_status("updating Yarn Cycle Planner")
 
-    config = load_config()
-    config_errors = validate_config(config)
-    runtime_errors = validate_runtime_architecture(config)
-    if config_errors:
-        print_header("Configuration Errors")
-        for error in config_errors:
-            print(f"  - {error}")
-        write_status("error: invalid configuration")
-        if not is_frozen:
-            input("\nPress Enter to exit...")
-        sys.exit(1)
+        print_header("Yarn Cycle Planner Update")
+        print(f"Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
-    if runtime_errors:
-        print_header("Runtime Architecture Error")
-        for error in runtime_errors:
-            print(f"  - {error}")
-        write_status("error: runtime architecture mismatch")
-        if not is_frozen:
-            input("\nPress Enter to exit...")
-        sys.exit(1)
+        config = load_config()
+        config_errors = validate_config(config)
+        runtime_errors = validate_runtime_architecture(config)
+        if config_errors:
+            print_header("Configuration Errors")
+            for error in config_errors:
+                print(f"  - {error}")
+            write_status("error: invalid configuration")
+            sys.exit(1)
 
-    converters = [
-        ("yarn_cycle_planner_prebuild_converter", "Yarn Cycle Planner Prebuild"),
-    ]
+        if runtime_errors:
+            print_header("Runtime Architecture Error")
+            for error in runtime_errors:
+                print(f"  - {error}")
+            write_status("error: runtime architecture mismatch")
+            sys.exit(1)
 
-    results = {}
-    for module_name, label in converters:
-        write_status(f"updating {label}")
-        results[label] = run_converter(module_name, label)
+        demand_csv = config.get("paths", {}).get("cycle_planner_yarn_demand_csv", "NOT SET")
+        print(f"\nDemand file: {demand_csv}")
 
-    end_time = datetime.now()
-    duration = (end_time - start_time).total_seconds()
+        converters = [
+            ("FIN_yarn_inventory_converter", "FIN Yarn Inventory"),
+            ("WIP_yarn_inventory_converter", "WIP Yarn Inventory"),
+            ("pending_yarn_orders_converter", "Pending Yarn Orders"),
+            ("open_yarn_production_converter", "Open Yarn Production"),
+            ("yarn_cycle_planner_prebuild_converter", "Yarn Cycle Planner Prebuild"),
+        ]
 
-    print_header("Summary")
-    print(f"Completed: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Duration: {duration:.2f} seconds\n")
+        results = {}
+        for module_name, label in converters:
+            write_status(f"updating {label}")
+            results[label] = run_converter(module_name, label)
 
-    for label, success in results.items():
-        status = "✓ SUCCESS" if success else "✗ FAILED"
-        print(f"  {status}: {label}")
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
 
-    if not all(results.values()):
-        print("\n⚠ One or more Yarn Cycle Planner steps failed")
-        if not is_frozen:
-            input("\nPress Enter to exit...")
-        sys.exit(1)
+        print_header("Summary")
+        print(f"Completed: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Duration: {duration:.2f} seconds\n")
 
-    write_status("update complete", mark_complete=True)
-    print("\n✓ Yarn Cycle Planner update completed successfully!")
-    if not is_frozen:
-        input("\nPress Enter to exit...")
-    sys.exit(0)
+        for label, success in results.items():
+            status = "✓ SUCCESS" if success else "✗ FAILED"
+            print(f"  {status}: {label}")
+
+        if not all(results.values()):
+            print("\n⚠ One or more Yarn Cycle Planner steps failed")
+            sys.exit(1)
+
+        write_status("update complete", mark_complete=True)
+        print("\n✓ Yarn Cycle Planner update completed successfully!")
+        sys.exit(0)
+    finally:
+        stop_export_log(log_file, original_stdout, original_stderr)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """
-Quick inventory query for Yarn Cycle Planner.
-Uses CAMSY (IBM i) connection and exports a CSV for real-world testing.
+WIP yarn inventory query for Yarn Cycle Planner.
+Uses CAMSY (SQL Server) connection and exports a CSV for use in planning.
 """
 
 from pathlib import Path
@@ -13,26 +13,27 @@ from utils import load_config, ensure_export_folder, build_connection_string
 
 
 def build_inventory_query() -> str:
-    """Build the production yarn inventory query for CAMSY."""
+    """Build the WIP yarn inventory query for CAMSY."""
     return """
-SELECT
-    Y1YNID,
-    Y1YCLR,
-    Y1LOT#,
-    SUM(Y1CNES) Y1CNES,
-    SUM(Y1NWGT) Y1NWGT,
-    Y1WHSE
-FROM YAP010
-WHERE
-    Y1ACT = 0
-    AND Y1WHSE IN ('R1', 'R2', 'R3', 'R7', 'E1')
-    AND Y1LOC <> 'WASTE'
-GROUP BY
-    Y1YNID,
-    Y1YCLR,
-    Y1LOT#,
-    Y1WHSE
-"""
+        SELECT
+            Y1YNID,
+            Y1YCLR,
+            Y1LOT#,
+            SUM(Y1CNES) as Y1CNES,
+            SUM(Y1NWGT) as Y1NWGT,
+            Y1WHSE
+
+        FROM DATA.YAP010
+        WHERE
+            Y1ACT = 0
+            AND Y1WHSE IN ('R1', 'R2', 'R3', 'R7', 'E1')
+            AND Y1LOC <> 'WASTE'
+        GROUP BY
+            Y1YNID,
+            Y1YCLR,
+            Y1LOT#,
+            Y1WHSE
+    """
 
 
 def main() -> None:
@@ -51,9 +52,9 @@ def main() -> None:
     with pyodbc.connect(connection_string) as conn:
         df = pd.read_sql(query, conn)
 
-    fixed_output_path = export_folder / "Yarn Inventory.csv"
+    fixed_output_path = export_folder / "WIP Yarn Inventory.csv"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    fallback_output_path = export_folder / f"Yarn Inventory_{timestamp}.csv"
+    fallback_output_path = export_folder / f"WIP Yarn Inventory_{timestamp}.csv"
 
     try:
         df.to_csv(fixed_output_path, index=False)
@@ -62,8 +63,8 @@ def main() -> None:
         df.to_csv(fallback_output_path, index=False)
         output_path = fallback_output_path
 
-    print(f"Yarn inventory rows: {len(df)}")
-    print(f"Yarn inventory export: {output_path}")
+    print(f"WIP yarn inventory rows: {len(df)}")
+    print(f"WIP yarn inventory export: {output_path}")
 
 
 if __name__ == "__main__":

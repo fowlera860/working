@@ -1,25 +1,14 @@
-# Building a 32-bit EXE for Yarn Cycle Planner
+# Building an EXE for Yarn Cycle Planner
 
-This project uses an IBM i ODBC driver configured as **32-bit**.
-The executable must be built with **32-bit Python**.
+Both `CAMS` and `CAMSY` connect via SQL Server (ODBC Driver 17+), so a standard **64-bit Python** build is fine.
 
-## 1) Install 32-bit Python
-
-Install a 32-bit Python version on Windows (same major/minor version used for development).
-
-Quick verification:
-```bash
-python -c "import struct; print(struct.calcsize('P') * 8)"
-```
-Expected output: `32`
-
-## 2) Install dependencies in the 32-bit environment
+## 1) Install dependencies
 
 ```bash
 pip install pyinstaller pandas pyodbc openpyxl
 ```
 
-## 3) Build executable
+## 2) Build executable
 
 From the `Yarn Cycle Planner` folder:
 
@@ -27,17 +16,16 @@ From the `Yarn Cycle Planner` folder:
 pyinstaller UpdateYarnCyclePlanner.spec
 ```
 
-## 4) Output
+## 3) Output
 
 - `dist/UpdateYarnCyclePlanner.exe`
 
-## 5) Runtime safety check
+## 4) Deployment
 
-`UpdateYarnCyclePlanner.py` includes a guard:
-- If `CAMSY` uses a `32-bit` ODBC driver and runtime is 64-bit, it exits with a clear error.
+- Keep `config.json` next to the exe — paths and connection settings can be edited without rebuilding.
+- ODBC Driver 17 (or later) for SQL Server must be installed on the target machine.
 
 ## Notes
 
-- Do not build this exe from a 64-bit Python install.
-- IBM i / Client Access ODBC driver must already be installed on the target machine.
-- Keep `config.json` next to the exe so paths and connection settings can be edited without rebuilding.
+- The spec file lists all converter modules as `hiddenimports` so PyInstaller bundles them correctly.
+- To add a new converter: add the `.py` file, register it in `UpdateYarnCyclePlanner.py`, and add the module name to `hiddenimports` in the spec.
