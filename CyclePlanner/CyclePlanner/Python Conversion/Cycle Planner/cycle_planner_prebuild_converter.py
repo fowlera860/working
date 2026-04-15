@@ -199,10 +199,10 @@ def build_master_dataset(data: dict, planning_groups_df: pd.DataFrame) -> pd.Dat
     
     # 3. Calculate Inv LF from Inventory
     if not data['inventory'].empty:
-        # Check which column name is used (Feet or FeetAvailable)
-        feet_col = 'Feet' if 'Feet' in data['inventory'].columns else 'FeetAvailable'
+        # Use BalFeet as the inventory column
+        feet_col = 'BalFeet'
         if feet_col not in data['inventory'].columns:
-            print(f"  ⚠ Warning: Neither 'Feet' nor 'FeetAvailable' found in inventory")
+            print(f"  ⚠ Warning: 'BalFeet' not found in inventory")
             print(f"    Available columns: {data['inventory'].columns.tolist()}")
             result['Inv LF'] = 0
         else:

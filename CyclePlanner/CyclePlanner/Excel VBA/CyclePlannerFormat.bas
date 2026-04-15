@@ -1,144 +1,192 @@
-Sub FormatCyclePlanner()
-    Application.ScreenUpdating = False
-    'On Error GoTo ErrHnd
+Sub GenerateCyclePlanner()
+    On Error GoTo errHndl
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("Cycle Planner")
     
-    Dim wsCP As Worksheet
-    Dim wsParam As Worksheet
-    Dim CP As Range
-    Dim tblRow As Range
+    Dim sourceTable As ListObject
+    Set sourceTable = ThisWorkbook.Sheets("CyclePlannerPrebuild").ListObjects("CyclePlannerPrebuild")
+    'Set sourceTable = ThisWorkbook.Sheets("CyclePlannerPrebuild (2)").ListObjects("CyclePlannerPrebuild__2")
     
+    Dim outputTable As ListObject
+    Set outputTable = ws.ListObjects("CyclePlannerOutput")
     
-    Set wsParam = ThisWorkbook.Worksheets("Parameters")
+    ' clear output table first
+    If outputTable.ListRows.Count > 0 Then outputTable.DataBodyRange.Delete
+    ' filter source table based on drop-down value
     
-    Dim clrSpacer As Variant
-    Dim clrTotals As Variant
-    Dim clrSpacerTimePhase As Variant
-    Dim clrStripe1 As Variant
-    Dim clrStripe2 As Variant
-    Dim clrStripe1TimePhase As Variant
-    Dim clrStripe2TimePhase As Variant
-    Dim clrStripe1LowStock As Variant
-    Dim clrStripe2LowStock As Variant
-    Dim SpacerSize As Integer
-    Dim lowStockAmount As Long
-    Dim baseColor As Variant
+    Dim cell As Range
+    Dim SelectedGroup As String
+    SelectedGroup = ws.Range("C2").Value  ' get group to filter by
+    Dim arr() As Variant
+    Dim r As Long
+    ReDim arr(1 To sourceTable.ListRows.Count, 1 To sourceTable.ListColumns.Count)
+    r = 0
     
-    clrSpacer = wsParam.Range("B22").Interior.Color
-    clrTotals = wsParam.Range("B24").Interior.Color
-    clrStripe1 = wsParam.Range("B20").Interior.Color
-    clrStripe2 = wsParam.Range("B21").Interior.Color
-    clrSpacerTimePhase = wsParam.Range("C22").Interior.Color
-    clrStripe1TimePhase = wsParam.Range("C20").Interior.Color
-    clrStripe2TimePhase = wsParam.Range("C21").Interior.Color
-    clrStripe1LowStock = wsParam.Range("D20").Interior.Color
-    clrStripe2LowStock = wsParam.Range("D21").Interior.Color
-    SpacerSize = wsParam.Range("B23").Value
-    lowStockAmount = wsParam.Range("B4").Value
-    
-
-    Set wsCP = ThisWorkbook.Worksheets("Cycle Planner")
-    With wsCP.Range("A7:AZ300")
-        .RowHeight = 15
-        .Interior.Color = xlNone
-        .Font.Bold = False
-        .Font.ColorIndex = xlAutomatic
-    End With
-
-    Set CP = wsCP.Range("CyclePlannerOutput")
-    
-    Dim odd As Boolean
-    Dim col As Long
-    Dim lastCol As Long
-    Dim isWeekCol() As Boolean
-    
-    lastCol = CP.Columns.Count
-    ReDim isWeekCol(1 To lastCol)
-    
-    ' Precompute which columns are "Week " columns
-    For col = 1 To lastCol
-        isWeekCol(col) = (Left(CP.Cells(1, col).Offset(-1, 0).Value, 5) = "Week ")
-    Next col
-    
-    odd = True
-    
-    For Each tblRow In CP.rows
-        Dim isTotalsRow As Boolean
-        Dim isSpacerRow As Boolean
-
-        isTotalsRow = (Left$(CStr(tblRow.Cells(1, 2).Value), 6) = "Total ")
-        isSpacerRow = (tblRow.Cells(1, 1).Value = "" And tblRow.Cells(1, 2).Value = "")
-
-        If isSpacerRow Then
-            tblRow.RowHeight = SpacerSize
-        Else
-            tblRow.RowHeight = 15
+    Dim i As Long
+    For i = 1 To sourceTable.ListRows.Count
+        If sourceTable.DataBodyRange.Cells(i, 1).Value = SelectedGroup Then ' adjust column index
+            r = r + 1
+            Dim j As Long
+            For j = 1 To sourceTable.ListColumns.Count
+                arr(r, j) = sourceTable.DataBodyRange.Cells(i, j).Value
+            Next j
         End If
+    Next i
+    
+    ' Add totals rows per color group
+    Dim outputList As Collection
+    Set outputList = New Collection
+
+    Dim totalCols As Variant
+    totalCols = Array(15, 16, 17, 18, 19, 20, 21, 22, 23, 25, 26, 27)
+    '15 O Avg Forecast LF
+    '16 P Avg Forecast Lbs
+    '17 Q AsgQty LF
+    '18 R ReservedQty LF
+    '19 S B/O LF
+    '20 T Open Tuft LF
+    '21 U Inv LF
+    '22 V Inv Pos (LF)
+    '23 W Inv Pos (Lbs)
+    '25 Y Recommended LF
+    '26 Z Recommended Rolls
+    '27 AA Recommended Lbs
+    
+    Dim totalCol As Variant
+
+    Dim runningTotals() As Double
+    ReDim runningTotals(1 To UBound(arr, 2))
+
+    Dim grandTotals() As Double
+    ReDim grandTotals(1 To UBound(arr, 2))
+    
+    Dim prevValue As Variant
+    prevValue = ""
+    
+    For idx = 1 To r   ' <-- loop only through actual filtered rows
+        Dim currentValue As Variant
+        currentValue = arr(idx, 2)  ' adjust column index for colorgroup
         
-        'find fill color
-        For col = 1 To lastCol
-            If isSpacerRow Then
-                ' Spacer row
-                If isWeekCol(col) Then
-                    baseColor = clrSpacerTimePhase
-                Else
-                    baseColor = clrSpacer
+        ' Add totals row when color group changes.
+        If prevValue <> "" And currentValue <> prevValue Then
+            Dim totalsRow() As Variant
+            ReDim totalsRow(1 To 1, 1 To UBound(arr, 2))
+            Dim c As Long
+            For c = 1 To UBound(arr, 2)
+                totalsRow(1, c) = ""
+            Next c
+            totalsRow(1, 1) = arr(idx - 1, 1)
+            totalsRow(1, 2) = "Total " & prevValue
+            totalsRow(1, 29) = arr(idx - 1, 29)
+            totalsRow(1, 30) = arr(idx - 1, 30)
+            totalsRow(1, 31) = arr(idx - 1, 31)
+            totalsRow(1, 32) = arr(idx - 1, 32)
+            totalsRow(1, 33) = arr(idx - 1, 33)
+            
+            For Each totalCol In totalCols
+                If CLng(totalCol) <= UBound(arr, 2) Then
+                    totalsRow(1, CLng(totalCol)) = runningTotals(CLng(totalCol))
+                    runningTotals(CLng(totalCol)) = 0
                 End If
-            ElseIf isTotalsRow Then
-                ' Totals row uses dedicated color and normal row spacing.
-                baseColor = clrTotals
+            Next totalCol
+
+            'add total row calculations
+            
+            If totalsRow(1, 16) = 0 Then
+                totalsRow(1, 24) = 0
+                totalsRow(1, 28) = 0
             Else
-                ' Normal row
-                If odd Then
-                    baseColor = IIf(isWeekCol(col), clrStripe2TimePhase, clrStripe2)
-                Else
-                    baseColor = IIf(isWeekCol(col), clrStripe1TimePhase, clrStripe1)
-                End If
-                
-                ' Override with low stock colors if value is <= lowStockAmount
-                If isWeekCol(col) Then
-                    If IsNumeric(tblRow.Cells(1, col).Value) Then
-                        If tblRow.Cells(1, col).Value <= lowStockAmount Then
-                            If odd Then
-                                baseColor = clrStripe2LowStock
-                            Else
-                                baseColor = clrStripe1LowStock
-                            End If
-                        End If
-                    End If
-                End If
+                'X Inv Pos (Wks) = W Inv Pos (Lbs) / P Avg Forecast Lbs
+                totalsRow(1, 24) = totalsRow(1, 23) / totalsRow(1, 16)
+                'AB Inv Pos (Wks) = (  W Inv Pos (Lbs) + AA RecommendedLbs) / P Avg Forecast Lbs
+                totalsRow(1, 28) = (totalsRow(1, 23) + totalsRow(1, 27)) / totalsRow(1, 16)
             End If
-            'assign color
-            tblRow.Cells(1, col).Interior.Color = baseColor
-        Next col
-        
-        ' For normal rows only: highlight Recommended (column 22) when above zero.
-        If (Not isSpacerRow) And (Not isTotalsRow) Then
-            If lastCol >= 22 Then
-                If IsNumeric(tblRow.Cells(1, 22).Value) And tblRow.Cells(1, 22).Value > 0 Then
-                    tblRow.Cells(1, 22).Font.Color = vbRed
-                    tblRow.Cells(1, 22).Font.Bold = True
-                Else
-                    tblRow.Cells(1, 22).Font.ColorIndex = xlAutomatic
-                    tblRow.Cells(1, 22).Font.Bold = False
-                End If
-            End If
-
-            ' Toggle odd/even only for normal rows
-            odd = Not odd
-        End If
-    Next tblRow
+            outputList.Add totalsRow
+            
             
 
+            ' Add a true blank spacer row after each totals row (between groups).
+            Dim spacerRow() As Variant
+            ReDim spacerRow(1 To 1, 1 To UBound(arr, 2))
+            For c = 1 To UBound(arr, 2)
+                spacerRow(1, c) = ""
+            Next c
+            outputList.Add spacerRow
+        End If
+        
+        
+        Dim dataRow() As Variant
+        ReDim dataRow(1 To 1, 1 To UBound(arr, 2))
+        For c = 1 To UBound(arr, 2)
+            dataRow(1, c) = arr(idx, c)
+        Next c
+        outputList.Add dataRow
 
+        For Each totalCol In totalCols
+            If CLng(totalCol) <= UBound(arr, 2) Then
+                If IsNumeric(arr(idx, CLng(totalCol))) Then
+                    runningTotals(CLng(totalCol)) = runningTotals(CLng(totalCol)) + CDbl(arr(idx, CLng(totalCol)))
+                    grandTotals(CLng(totalCol)) = grandTotals(CLng(totalCol)) + CDbl(arr(idx, CLng(totalCol)))
+                End If
+            End If
+        Next totalCol
+        
+        prevValue = currentValue
+    Next idx
 
-    Application.ScreenUpdating = False
+    If r > 0 Then
+        Dim finalTotalsRow() As Variant
+        ReDim finalTotalsRow(1 To 1, 1 To UBound(arr, 2))
+        For c = 1 To UBound(arr, 2)
+            finalTotalsRow(1, c) = ""
+        Next c
+        finalTotalsRow(1, 2) = "Total " & prevValue
+
+        For Each totalCol In totalCols
+            If CLng(totalCol) <= UBound(arr, 2) Then
+                finalTotalsRow(1, CLng(totalCol)) = runningTotals(CLng(totalCol))
+            End If
+        Next totalCol
+
+        outputList.Add finalTotalsRow
+
+        Dim grandTotalsRow() As Variant
+        ReDim grandTotalsRow(1 To 1, 1 To UBound(arr, 2))
+        For c = 1 To UBound(arr, 2)
+            grandTotalsRow(1, c) = ""
+        Next c
+        grandTotalsRow(1, 2) = "Grand Total"
+
+        For Each totalCol In totalCols
+            If CLng(totalCol) <= UBound(arr, 2) Then
+                grandTotalsRow(1, CLng(totalCol)) = grandTotals(CLng(totalCol))
+            End If
+        Next totalCol
+
+        outputList.Add grandTotalsRow
+    End If
+
+    ' finalArr already contains filtered rows + totals rows
+    Dim totalRows As Long
+    totalRows = outputList.Count
+    
+    Dim finalArr() As Variant
+    ReDim finalArr(1 To totalRows, 1 To UBound(arr, 2))
+    
+    For i = 1 To totalRows
+        For j = 1 To UBound(arr, 2)
+            finalArr(i, j) = outputList(i)(1, j)
+        Next j
+    Next i
+    
+    ' Write to table
+    If totalRows > 0 Then
+        outputTable.Resize outputTable.Range.Resize(totalRows + 1, sourceTable.ListColumns.Count)
+        outputTable.DataBodyRange.Value = finalArr
+    End If
     Exit Sub
-ErrHnd:
-    Application.ScreenUpdating = True
+errHndl:
+    Application.EnableEvents = True
     MsgBox err.Description
 End Sub
-
-
-
-
 
