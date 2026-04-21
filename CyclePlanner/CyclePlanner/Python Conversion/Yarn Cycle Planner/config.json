@@ -24,6 +24,7 @@
     "inv_roll_cutoff": 3,
     "inventory_preview_rows": 500,
     "minimum_weeks": 2,
-    "target_weeks": 6
+    "target_weeks": 6,
+    "min_lot_lbs": 500
   }
 }

@@ -11,6 +11,7 @@ Output columns:
   Date       — promise date for real orders; Sunday of the arrival week for projected
   Style      — carpet style
   Color      — carpet color
+  Size       — carpet size
   YarnType   — yarn type from YarnXRef
   YarnColor  — yarn color from YarnXRef
   Feet       — linear feet ordered / projected
@@ -74,7 +75,7 @@ def load_yarnxref(export_folder: Path) -> pd.DataFrame:
         return pd.DataFrame()
 
     dtype_dict = {"Style": "string", "Color": "string", "Size": "string",
-                  "YarnType": "string", "YarnColor": "string"}
+                  "YarnID": "string", "YarnType": "string", "YarnColor": "string"}
     df = pd.read_csv(path, dtype=dtype_dict)
     return df
 
@@ -98,11 +99,11 @@ def _expand_with_yarn(df: pd.DataFrame, yarnxref_df: pd.DataFrame) -> pd.DataFra
         df["YarnColor"] = pd.NA
         return df
 
-    xref = yarnxref_df[["Style", "Color", "Size", "YarnType", "YarnColor"]].copy()
+    xref = yarnxref_df[["Style", "Color", "Size", "YarnID", "YarnType", "YarnColor"]].copy()
     for col in ["Style", "Color", "Size"]:
         xref[col] = _clean_key(xref[col])
         df[col] = _clean_key(df[col])
-    xref = xref.drop_duplicates(subset=["Style", "Color", "Size", "YarnType", "YarnColor"])
+    xref = xref.drop_duplicates(subset=["Style", "Color", "Size", "YarnID", "YarnType"])
 
     expanded = df.merge(xref, on=["Style", "Color", "Size"], how="inner")
     return expanded
@@ -117,7 +118,7 @@ def build_real_demand(production_orders_df: pd.DataFrame, yarnxref_df: pd.DataFr
     missing = required - set(production_orders_df.columns)
     if missing:
         print(f"Warning: production_orders missing columns: {missing}")
-        return pd.DataFrame(columns=["Order #", "Date", "YarnType", "YarnColor", "Feet"])
+        return pd.DataFrame(columns=["Order #", "Date", "Style", "Color", "Size", "YarnType", "YarnColor", "Feet"])
 
     df = production_orders_df[["Style", "Color", "Size", "ProdNum", "PromiseDate", "OrderQty"]].copy()
     df["OrderQty"] = pd.to_numeric(df["OrderQty"], errors="coerce").fillna(0)
@@ -129,7 +130,7 @@ def build_real_demand(production_orders_df: pd.DataFrame, yarnxref_df: pd.DataFr
         "PromiseDate": "Date",
         "OrderQty": "Feet"
     })
-    return expanded[["Order #", "Date", "Style", "Color", "YarnType", "YarnColor", "Feet"]]
+    return expanded[["Order #", "Date", "Style", "Color", "Size", "YarnType", "YarnColor", "Feet"]]
 
 
 def build_projected_demand(projected_production_df: pd.DataFrame, yarnxref_df: pd.DataFrame) -> pd.DataFrame:
@@ -141,7 +142,7 @@ def build_projected_demand(projected_production_df: pd.DataFrame, yarnxref_df: p
     missing = required - set(projected_production_df.columns)
     if missing:
         print(f"Warning: projected_production missing columns: {missing}")
-        return pd.DataFrame(columns=["Order #", "Date", "YarnType", "YarnColor", "Feet"])
+        return pd.DataFrame(columns=["Order #", "Date", "Style", "Color", "Size", "YarnType", "YarnColor", "Feet"])
 
     df = projected_production_df[["Style", "Color", "Size", "Week #", "OrderSize"]].copy()
     df["Week #"] = pd.to_numeric(df["Week #"], errors="coerce").fillna(1).astype(int)
@@ -152,7 +153,7 @@ def build_projected_demand(projected_production_df: pd.DataFrame, yarnxref_df: p
     expanded["Date"] = expanded["Week #"].apply(week_number_to_date)
     expanded = expanded.rename(columns={"OrderSize": "Feet"})
 
-    return expanded[["Order #", "Date", "Style", "Color", "YarnType", "YarnColor", "Feet"]]
+    return expanded[["Order #", "Date", "Style", "Color", "Size", "YarnType", "YarnColor", "Feet"]]
 
 
 def build_tufting_demand(
@@ -174,7 +175,7 @@ def build_tufting_demand(
             frames.append(projected)
 
     if not frames:
-        return pd.DataFrame(columns=["Order #", "Date", "Style", "Color", "YarnType", "YarnColor", "Feet"])
+        return pd.DataFrame(columns=["Order #", "Date", "Style", "Color", "Size", "YarnType", "YarnColor", "Feet"])
 
     combined = pd.concat(frames, ignore_index=True)
     combined = combined[combined["Feet"] > 0].reset_index(drop=True)
@@ -223,10 +224,13 @@ def main():
     if not success:
         return False
 
+    unique_skus = tufting_demand_df[["Style", "Color", "Size"]].drop_duplicates().shape[0]
+
     print(f"Exported to: {output_path}")
     print(f"Total rows: {len(tufting_demand_df)}")
     print(f"  Real orders:      {(tufting_demand_df['Order #'] != 'Projected').sum()}")
     print(f"  Projected orders: {(tufting_demand_df['Order #'] == 'Projected').sum()}")
+    print(f"  Unique SKUs matched in YarnXRef: {unique_skus}")
     print("\nFirst few rows:")
     print(tufting_demand_df.head(10))
 

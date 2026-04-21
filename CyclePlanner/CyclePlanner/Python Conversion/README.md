@@ -154,7 +154,7 @@ See [docs/README.md](docs/README.md) for comprehensive documentation including:
 
 1) **Inputs**
 	- Add YarnAlts.xlsx (single table) with columns:
-	  - BaseType, BaseColor, AltNum, AltType, AltColor, AltSupplier
+	  - PlanningGroup, ColorGroup, YarnType, YarnColor, Supplier
 	- Extend `yarnxref` converter to include `YarnColor`.
 
 2) **Normalization Rules**

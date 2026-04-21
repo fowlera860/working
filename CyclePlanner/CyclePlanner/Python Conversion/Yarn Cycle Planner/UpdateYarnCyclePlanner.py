@@ -211,10 +211,12 @@ def main() -> None:
         print(f"\nDemand file: {demand_csv}")
 
         converters = [
-            ("FIN_yarn_inventory_converter", "FIN Yarn Inventory"),
-            ("WIP_yarn_inventory_converter", "WIP Yarn Inventory"),
-            ("pending_yarn_orders_converter", "Pending Yarn Orders"),
-            ("open_yarn_production_converter", "Open Yarn Production"),
+            ("FIN_yarn_inventory_converter",        "FIN Yarn Inventory"),
+            ("WIP_yarn_inventory_converter",        "WIP Yarn Inventory"),
+            ("pending_yarn_orders_converter",       "Pending Yarn Orders"),
+            ("yarn_assignments_converter",          "Yarn Assignments"),
+            ("yarn_lot_aggregate_converter",        "Yarn Lot Aggregate"),
+            ("open_yarn_production_converter",      "Open Yarn Production"),
             ("yarn_cycle_planner_prebuild_converter", "Yarn Cycle Planner Prebuild"),
         ]
 

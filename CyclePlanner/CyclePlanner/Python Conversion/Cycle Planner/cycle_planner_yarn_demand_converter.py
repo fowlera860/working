@@ -197,7 +197,8 @@ def build_time_phase_lbs_from_projected(
 def build_yarn_rollup(
     cycle_df: pd.DataFrame,
     yarnxref_df: pd.DataFrame,
-    projected_production_df: pd.DataFrame | None = None
+    projected_production_df: pd.DataFrame | None = None,
+    waste_pct: float = 0.0
 ) -> pd.DataFrame:
     """Build time-phased yarn demand — only yarns with demand are returned."""
     key_cols = ["Style", "Color", "Size"]
@@ -213,6 +214,13 @@ def build_yarn_rollup(
     if time_phase.empty:
         week_cols = [f"{YARN_WEEK_PREFIX}{i:02d}" for i in range(1, TIME_PHASE_WEEKS + 1)]
         return pd.DataFrame(columns=["YarnType", "YarnColor"] + week_cols)
+
+    if waste_pct:
+        week_cols = [f"{YARN_WEEK_PREFIX}{i:02d}" for i in range(1, TIME_PHASE_WEEKS + 1)]
+        multiplier = 1.0 + (waste_pct / 100.0)
+        for col in week_cols:
+            if col in time_phase.columns:
+                time_phase[col] = time_phase[col] * multiplier
 
     return time_phase.sort_values(by=["YarnType", "YarnColor"], kind="mergesort").reset_index(drop=True)
 
@@ -243,7 +251,10 @@ def main():
     cycle_df = trim_text_columns(cycle_df)
     yarnxref_df = trim_text_columns(yarnxref_df)
 
-    rollup_df = build_yarn_rollup(cycle_df, yarnxref_df, projected_production_df)
+    waste_pct = float(config.get("parameters", {}).get("percent_demand_yarn_waste", 0))
+    print(f"Yarn waste factor: {waste_pct}%")
+
+    rollup_df = build_yarn_rollup(cycle_df, yarnxref_df, projected_production_df, waste_pct=waste_pct)
 
     if rollup_df.empty:
         print("No yarns found after applying xref and alt mapping")

@@ -17,6 +17,24 @@
   "parameters": {
     "inv_roll_cutoff": 3,
     "minimum_weeks": 2,
-    "target_weeks": 6
+    "target_weeks": 8,
+    "percent_demand_yarn_waste": 3
+  },
+  "default_run_sizes": {
+    "creel": {
+      "run_size_lbs": 16700,
+      "lbs_week_min": 1500,
+      "lbs_week_max": null
+    },
+    "beam": {
+      "run_size_lbs": 7000,
+      "lbs_week_min": 300,
+      "lbs_week_max": 1499
+    },
+    "half_beam": {
+      "run_size_lbs": 3500,
+      "lbs_week_min": 0,
+      "lbs_week_max": 299
+    }
   }
 }

@@ -26,20 +26,15 @@ def date_to_week(order_date, weeks: int = TIME_PHASE_WEEKS) -> int:
         return 1
 
 
-def load_inventory(export_folder: Path, filename: str, type_col: str, color_col: str) -> pd.DataFrame:
-    """Load an inventory CSV and aggregate Y1NWGT by type + color."""
-    filepath = export_folder / filename
+def load_lot_aggregate(export_folder: Path) -> pd.DataFrame:
+    """Load the Yarn Lot Aggregate CSV (all lots, unfiltered)."""
+    filepath = export_folder / "Yarn Lot Aggregate.csv"
     if not filepath.exists():
-        print(f"  ⚠ {filename} not found — inventory will default to 0")
-        return pd.DataFrame(columns=["YarnType", "YarnColor", "Y1NWGT"])
-
-    df = pd.read_csv(filepath, dtype={type_col: str, color_col: str})
-    df[type_col] = df[type_col].str.strip()
-    df[color_col] = df[color_col].str.strip()
-    df["Y1NWGT"] = pd.to_numeric(df["Y1NWGT"], errors="coerce").fillna(0)
-
-    agg = df.groupby([type_col, color_col], as_index=False)["Y1NWGT"].sum()
-    return agg.rename(columns={type_col: "YarnType", color_col: "YarnColor"})
+        print("  ⚠ Yarn Lot Aggregate.csv not found — inventory will default to 0")
+        return pd.DataFrame(
+            columns=["LotNumber", "YarnType", "YarnColor", "FIN_Lbs", "WIP_Lbs", "PendingBalance", "Adjustment", "Total"]
+        )
+    return pd.read_csv(filepath, dtype={"LotNumber": str, "YarnType": str, "YarnColor": str})
 
 
 def main() -> None:
@@ -69,17 +64,38 @@ def main() -> None:
     print(f"  YarnAlts columns: {list(yarn_alts_df.columns)}")
     print(f"  Yarn Demand columns: {list(yarn_demand_df.columns)}")
 
-    yarn_alts_df["AltType"] = yarn_alts_df["AltType"].str.strip()
-    yarn_alts_df["AltColor"] = yarn_alts_df["AltColor"].str.strip()
+    yarn_alts_df["YarnType"] = yarn_alts_df["YarnType"].str.strip()
+    yarn_alts_df["YarnColor"] = yarn_alts_df["YarnColor"].str.strip()
     yarn_demand_df["YarnType"] = yarn_demand_df["YarnType"].str.strip()
     yarn_demand_df["YarnColor"] = yarn_demand_df["YarnColor"].str.strip()
 
-    # Load and aggregate inventory from exported CSVs
-    fin_inv = load_inventory(export_folder, "FIN Yarn Inventory.csv", "Y1TYPE", "Y1YCLR")
-    fin_inv = fin_inv.rename(columns={"Y1NWGT": "FIN Inventory"})
+    # Load lot aggregate and derive per-YarnType/YarnColor inventory components
+    lot_agg = load_lot_aggregate(export_folder)
+    min_lot_lbs = float(config.get("parameters", {}).get("min_lot_lbs", 500))
 
-    wip_inv = load_inventory(export_folder, "WIP Yarn Inventory.csv", "Y1YNID", "Y1YCLR")
-    wip_inv = wip_inv.rename(columns={"Y1NWGT": "WIP Inventory"})
+    def agg_by_type_color(col: str, rename_to: str, min_lbs_col: str = None) -> pd.DataFrame:
+        if lot_agg.empty or col not in lot_agg.columns:
+            return pd.DataFrame(columns=["YarnType", "YarnColor", rename_to])
+        src = lot_agg.copy()
+        src[col] = pd.to_numeric(src[col], errors="coerce").fillna(0)
+        if min_lbs_col and min_lbs_col in src.columns:
+            src[min_lbs_col] = pd.to_numeric(src[min_lbs_col], errors="coerce").fillna(0)
+            src = src[src[min_lbs_col] >= min_lot_lbs]
+        return (
+            src.groupby(["YarnType", "YarnColor"], as_index=False)[col]
+            .sum()
+            .rename(columns={col: rename_to})
+        )
+
+    fin_inv = agg_by_type_color("FIN_Lbs",   "FIN Inventory",       min_lbs_col="FIN_Lbs")
+    wip_inv = agg_by_type_color("WIP_Lbs",   "WIP Inventory")
+
+    # Build the set of valid lots to filter pending orders (lots with FIN_Lbs >= min_lot_lbs)
+    if not lot_agg.empty and "FIN_Lbs" in lot_agg.columns:
+        lot_agg["FIN_Lbs"] = pd.to_numeric(lot_agg["FIN_Lbs"], errors="coerce").fillna(0)
+        valid_lots = set(lot_agg.loc[lot_agg["FIN_Lbs"] >= min_lot_lbs, "LotNumber"].astype(str).str.strip())
+    else:
+        valid_lots = set()
 
     # Compute SkuCount from YarnXRef — distinct Style/Color/Size per YarnType/YarnColor
     yarnxref_csv_path = Path(paths.get("yarnxref_csv", ""))
@@ -111,23 +127,29 @@ def main() -> None:
         {c: "sum" for c in present_week_cols}
     )
 
-    # Build output: YarnAlts is the base, join demand on AltType/AltColor.
-    # Demand is expressed at the yarn level — each alt row has its own demand entry.
-    df = yarn_alts_df.merge(
-        demand_subset, left_on=["AltType", "AltColor"], right_on=["YarnType", "YarnColor"], how="left"
-    ).drop(columns=["YarnType", "YarnColor"])
+    # Build output: demand is the base so yarns with demand but no YarnAlts entry are retained.
+    # Yarns missing from YarnAlts get "Unlisted" for PlanningGroup and ColorGroup.
+    df = yarn_alts_df.merge(demand_subset, on=["YarnType", "YarnColor"], how="right")
+    df["PlanningGroup"] = df["PlanningGroup"].fillna("Unlisted")
+    df["ColorGroup"] = df["ColorGroup"].fillna("Unlisted")
 
-    df = df.merge(fin_inv, left_on=["AltType", "AltColor"], right_on=["YarnType", "YarnColor"], how="left").drop(columns=["YarnType", "YarnColor"])
-    df = df.merge(wip_inv, left_on=["AltType", "AltColor"], right_on=["YarnType", "YarnColor"], how="left").drop(columns=["YarnType", "YarnColor"])
-    df = df.merge(sku_counts, left_on=["AltType", "AltColor"], right_on=["YarnType", "YarnColor"], how="left").drop(columns=["YarnType", "YarnColor"])
+    df = df.merge(fin_inv,  on=["YarnType", "YarnColor"], how="left")
+    df = df.merge(wip_inv,  on=["YarnType", "YarnColor"], how="left")
+    df = df.merge(sku_counts, on=["YarnType", "YarnColor"], how="left")
 
     # Load and time-phase pending yarn orders by YarnType/YarnColor/Week
     po_week_cols = [f"PO W {i:02d}" for i in range(1, TIME_PHASE_WEEKS + 1)]
     pending_orders_path = export_folder / "Pending Yarn Orders.csv"
     if pending_orders_path.exists():
-        pending_df = pd.read_csv(pending_orders_path, dtype={"Y8TYPE": str, "Y8YCLR": str})
+        pending_df = pd.read_csv(pending_orders_path, dtype={"Y8TYPE": str, "Y8YCLR": str, "Y8LOT#": str})
         pending_df["Y8TYPE"] = pending_df["Y8TYPE"].str.strip()
         pending_df["Y8YCLR"] = pending_df["Y8YCLR"].str.strip()
+        # Filter to only lots included in the aggregate (above min_lot_lbs threshold)
+        if valid_lots and "Y8LOT#" in pending_df.columns:
+            pending_df["Y8LOT#"] = pending_df["Y8LOT#"].astype(str).str.strip()
+            before_po = len(pending_df)
+            pending_df = pending_df[pending_df["Y8LOT#"].isin(valid_lots)]
+            print(f"  Pending order rows filtered by valid lots: {before_po} → {len(pending_df)}")
         pending_df["OrderBalance"] = pd.to_numeric(pending_df["OrderBalance"], errors="coerce").fillna(0)
         pending_df["Week"] = pending_df["OrderDate"].apply(date_to_week)
         pending_df["WeekCol"] = pending_df["Week"].apply(lambda w: f"PO W {w:02d}")
@@ -142,15 +164,15 @@ def main() -> None:
             if col not in pending_pivot.columns:
                 pending_pivot[col] = 0.0
         pending_pivot = pending_pivot[["YarnType", "YarnColor"] + po_week_cols]
-        df = df.merge(pending_pivot, left_on=["AltType", "AltColor"], right_on=["YarnType", "YarnColor"], how="left").drop(columns=["YarnType", "YarnColor"])
+        df = df.merge(pending_pivot, on=["YarnType", "YarnColor"], how="left")
     else:
         print("  ⚠ Pending Yarn Orders.csv not found — PO weeks will default to 0")
 
     for col in po_week_cols:
         df[col] = pd.to_numeric(df.get(col, 0), errors="coerce").fillna(0)
 
-    df["FIN Inventory"] = df["FIN Inventory"].fillna(0)
-    df["WIP Inventory"] = df["WIP Inventory"].fillna(0)
+    df["FIN Inventory"]        = df["FIN Inventory"].fillna(0)
+    df["WIP Inventory"]        = df["WIP Inventory"].fillna(0)
     df["Inventory"] = df["FIN Inventory"] + df["WIP Inventory"]
     df["Pending Orders"] = df[po_week_cols].sum(axis=1)
     df["Total Demand"] = df[week_demand_cols].sum(axis=1)
@@ -176,7 +198,7 @@ def main() -> None:
             df[result_col] = (df[f"Week {i-1:02d}"] + df[po_col] - df[demand_col]).round(4)
 
     base_cols = [
-        c for c in ["BaseType", "BaseColor", "AltNum", "AltType", "AltColor", "AltSupplier", "SkuCount"]
+        c for c in ["PlanningGroup", "ColorGroup", "YarnType", "YarnColor", "Supplier", "SkuCount"]
         if c in df.columns
     ]
     output_df = df[base_cols + ["FIN Inventory", "WIP Inventory", "Inventory", "Pending Orders", "Total Demand"] + po_week_cols + week_result_cols]

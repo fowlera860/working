@@ -443,8 +443,9 @@ def add_recommendations(df: pd.DataFrame, minimum_weeks: float, target_weeks: fl
         - updated['AsgQty LF']
     )
     updated['Inv Pos (LF)'] = inv_pos_lf_numerator
-    # Convert LF to lbs: LF * (9/12 SY/LF) * (FaceWt oz/SY) / (16 oz/lb)
-    updated['Inv Pos (Lbs)'] = updated['Inv Pos (LF)'] * FORECAST_SY_TO_LF_FACTOR * updated['FaceWt'] / 16
+    # Convert LF to lbs: LF * (12/9 SY/LF) * (FaceWt oz/SY) / (16 oz/lb)
+    # 12-ft-wide carpet: 1 LF = 12 sq ft = 12/9 SY
+    updated['Inv Pos (Lbs)'] = updated['Inv Pos (LF)'] / FORECAST_SY_TO_LF_FACTOR * updated['FaceWt'] / 16
     updated['Inv Pos (Wks)'] = np.where(updated['Avg Forecast'] == 0, 0, inv_pos_lf_numerator / updated['Avg Forecast'])
 
     # --- Color group metrics ---
