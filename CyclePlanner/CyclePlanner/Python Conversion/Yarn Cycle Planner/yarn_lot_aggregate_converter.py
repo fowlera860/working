@@ -149,7 +149,8 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Add SkuCount from YarnXRef if available
     # ------------------------------------------------------------------
-    yarnxref_path = Path(paths.get("yarnxref_csv", ""))
+    _yarnxref_csv_str = paths.get("yarnxref_csv", "")
+    yarnxref_path = Path(_yarnxref_csv_str) if _yarnxref_csv_str else None
     if yarnxref_path and yarnxref_path.exists():
         xref_df = pd.read_csv(
             yarnxref_path,

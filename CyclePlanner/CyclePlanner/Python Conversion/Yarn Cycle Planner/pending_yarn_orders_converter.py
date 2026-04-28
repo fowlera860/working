@@ -33,6 +33,34 @@ def build_pending_yarn_orders_query() -> str:
         WHERE
             Y8ACT = 0
             AND Y8WHSE in ('E1')
+
+        UNION ALL
+
+        SELECT
+            A.Y7ORD#,
+            A.Y7TYPE,
+            A.Y7YCLR,
+            A.Y7ORD#,
+            NULL,
+            NULL,
+            A.Y7LBSC,
+            A.Y7LBPR,
+            A.Y7LBSC - A.Y7LBPR,
+            A.Y7OJUL + 366
+        FROM DATA.WYP070 AS A
+        WHERE
+            A.Y7WHSE = 'E1'
+            AND A.Y7ACT = 0
+            AND A.Y7PCDE = 'YPK'
+            AND A.Y7LBSC > A.Y7LBPR * 1.2
+            AND EXISTS (
+                SELECT 1
+                FROM DATA.WYP070 AS B
+                WHERE
+                    B.Y7ORD# = A.Y7ORD#
+                    AND B.Y7PCDE = 'GBO'
+                    AND B.Y7ACT = 0
+            )
     """
 
 

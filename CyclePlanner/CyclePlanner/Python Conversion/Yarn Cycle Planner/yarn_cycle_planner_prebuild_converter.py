@@ -18,8 +18,7 @@ def date_to_week(order_date, weeks: int = TIME_PHASE_WEEKS) -> int:
     try:
         today = datetime.now().date()
         current_week_sunday = today - timedelta(days=today.weekday() + 1)
-        if isinstance(order_date, str):
-            order_date = datetime.strptime(order_date, "%Y-%m-%d").date()
+        order_date = pd.to_datetime(order_date).date()
         weeks_diff = (order_date - current_week_sunday).days // 7
         return max(1, min(weeks_diff + 1, weeks))
     except Exception:
@@ -90,15 +89,23 @@ def main() -> None:
     fin_inv = agg_by_type_color("FIN_Lbs",   "FIN Inventory",       min_lbs_col="FIN_Lbs")
     wip_inv = agg_by_type_color("WIP_Lbs",   "WIP Inventory")
 
-    # Build the set of valid lots to filter pending orders (lots with FIN_Lbs >= min_lot_lbs)
+    # Build the set of valid lots to filter pending orders.
+    # Include lots that have FIN_Lbs >= min_lot_lbs OR have a meaningful PendingBalance.
     if not lot_agg.empty and "FIN_Lbs" in lot_agg.columns:
         lot_agg["FIN_Lbs"] = pd.to_numeric(lot_agg["FIN_Lbs"], errors="coerce").fillna(0)
-        valid_lots = set(lot_agg.loc[lot_agg["FIN_Lbs"] >= min_lot_lbs, "LotNumber"].astype(str).str.strip())
+        valid_fin_lots = lot_agg.loc[lot_agg["FIN_Lbs"] >= min_lot_lbs, "LotNumber"].astype(str).str.strip()
+        if "PendingBalance" in lot_agg.columns:
+            lot_agg["PendingBalance"] = pd.to_numeric(lot_agg["PendingBalance"], errors="coerce").fillna(0)
+            valid_pending_lots = lot_agg.loc[lot_agg["PendingBalance"] > 0, "LotNumber"].astype(str).str.strip()
+        else:
+            valid_pending_lots = pd.Series(dtype=str)
+        valid_lots = set(valid_fin_lots) | set(valid_pending_lots)
     else:
         valid_lots = set()
 
     # Compute SkuCount from YarnXRef — distinct Style/Color/Size per YarnType/YarnColor
-    yarnxref_csv_path = Path(paths.get("yarnxref_csv", ""))
+    _yarnxref_csv_str = paths.get("yarnxref_csv", "")
+    yarnxref_csv_path = Path(_yarnxref_csv_str) if _yarnxref_csv_str else None
     if yarnxref_csv_path and yarnxref_csv_path.exists():
         xref_df = pd.read_csv(yarnxref_csv_path, dtype={"Style": str, "Color": str, "Size": str, "YarnType": str, "YarnColor": str})
         for col in ["Style", "Color", "Size", "YarnType", "YarnColor"]:
@@ -153,6 +160,14 @@ def main() -> None:
         pending_df["OrderBalance"] = pd.to_numeric(pending_df["OrderBalance"], errors="coerce").fillna(0)
         pending_df["Week"] = pending_df["OrderDate"].apply(date_to_week)
         pending_df["WeekCol"] = pending_df["Week"].apply(lambda w: f"PO W {w:02d}")
+        # --- diagnostic: show pending order week assignments for a specific yarn ---
+        _debug_type, _debug_color = "7081", "5273"
+        _debug_rows = pending_df[(pending_df["Y8TYPE"] == _debug_type) & (pending_df["Y8YCLR"] == _debug_color)]
+        if not _debug_rows.empty:
+            print(f"\n  [DEBUG] Pending orders for {_debug_type}/{_debug_color}:")
+            print(_debug_rows[["Y8LOT#", "OrderDate", "OrderBalance", "Week", "WeekCol"]].to_string(index=False))
+            print(f"  [DEBUG] Total PO balance: {_debug_rows['OrderBalance'].sum()}")
+        # --- end diagnostic ---
         pending_pivot = (
             pending_df.groupby(["Y8TYPE", "Y8YCLR", "WeekCol"], as_index=False)["OrderBalance"]
             .sum()
