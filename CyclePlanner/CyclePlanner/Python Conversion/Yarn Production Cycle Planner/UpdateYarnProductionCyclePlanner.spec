@@ -1,26 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec file for Yarn Cycle Planner UpdateYarnCyclePlanner.py
+# PyInstaller spec file for Yarn Production Cycle Planner UpdateYarnProductionCyclePlanner.py
 
 block_cipher = None
 
 a = Analysis(
-    ['UpdateYarnCyclePlanner.py'],
+    ['UpdateYarnProductionCyclePlanner.py'],
     pathex=[],
     binaries=[],
     datas=[
         # Don't bundle config.json - let users keep it next to the exe
     ],
     hiddenimports=[
-        'FIN_yarn_inventory_converter',
-        'WIP_yarn_inventory_converter',
-        'yarn_cycle_planner_prebuild_converter',
-        'pending_yarn_orders_converter',
-        'yarn_assignments_converter',
-        'yarn_lot_aggregate_converter',
         'open_yarn_production_converter',
-        'yarn_blend_xref_converter',
-        'yarn_blend_demand_converter',
         'yarn_order_recommendation_converter',
+        'yarn_production_prebuild_sku_converter',
+        'yarn_production_prebuild_group_converter',
         'utils',
         'numpy',
         'pandas',
@@ -65,7 +59,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='UpdateYarnCyclePlanner',
+    name='UpdateYarnProductionCyclePlanner',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

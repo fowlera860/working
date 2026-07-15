@@ -1,0 +1,42 @@
+HOW TO APPLY VBA CHANGES TO AdairsvilleDailyCuts - NEW MASTER1.xlsm
+====================================================================
+
+The file "Results.bas" in this folder contains the updated VBA code for
+the Results module. The changes add a "Saved X new records, updated Y records"
+message box to UpdateDailyCutsResults.
+
+STEPS TO APPLY:
+---------------
+
+1. Open "AdairsvilleDailyCuts - NEW MASTER1.xlsm" in Excel.
+
+2. Open the VBA Editor:
+   Press Alt + F11
+
+3. In the Project Explorer (left panel), expand:
+   VBAProject (AdairsvilleDailyCuts - NEW MASTER1.xlsm)
+   └── Modules
+       └── Results
+
+4. Double-click "Results" to open it.
+
+5. Select ALL the existing code in the editor (Ctrl + A) and DELETE it.
+
+6. Open "Results.bas" from this folder in any text editor (Notepad, VS Code, etc.).
+   Select all (Ctrl + A), copy (Ctrl + C).
+
+7. Back in the VBA Editor, paste (Ctrl + V) into the now-empty Results module.
+
+8. Close the VBA Editor (Alt + F4 or just close the window).
+
+9. Save the Excel file (Ctrl + S). If prompted, keep the macro-enabled format (.xlsm).
+
+WHAT CHANGED IN Results.bas:
+-----------------------------
+- UpdateDailyCutsResults now tracks how many rows were added vs updated
+- UpsertRow signature has two new ByRef parameters: newCount and updatedCount
+- After the loop completes, a MsgBox displays:
+    "Saved X new records, updated Y records."
+
+ALL OTHER MODULES (Module1, Sheet1-6, ThisWorkbook) ARE UNCHANGED.
+You do not need to touch them.

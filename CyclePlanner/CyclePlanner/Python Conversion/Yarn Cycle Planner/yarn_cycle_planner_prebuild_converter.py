@@ -65,8 +65,18 @@ def main() -> None:
 
     yarn_alts_df["YarnType"] = yarn_alts_df["YarnType"].str.strip()
     yarn_alts_df["YarnColor"] = yarn_alts_df["YarnColor"].str.strip()
+    for col in ["PlanningGroup", "ColorGroup"]:
+        if col in yarn_alts_df.columns:
+            yarn_alts_df[col] = yarn_alts_df[col].str.strip()
     yarn_demand_df["YarnType"] = yarn_demand_df["YarnType"].str.strip()
     yarn_demand_df["YarnColor"] = yarn_demand_df["YarnColor"].str.strip()
+
+    # Extract LbsPerWeek before subsetting for week columns
+    if "LbsPerWeek" in yarn_demand_df.columns:
+        lbs_per_week_df = yarn_demand_df[["YarnType", "YarnColor", "LbsPerWeek"]].copy()
+        lbs_per_week_df["LbsPerWeek"] = pd.to_numeric(lbs_per_week_df["LbsPerWeek"], errors="coerce").fillna(0)
+    else:
+        lbs_per_week_df = pd.DataFrame(columns=["YarnType", "YarnColor", "LbsPerWeek"])
 
     # Load lot aggregate and derive per-YarnType/YarnColor inventory components
     lot_agg = load_lot_aggregate(export_folder)
@@ -123,6 +133,10 @@ def main() -> None:
         sku_counts = pd.DataFrame(columns=["YarnType", "YarnColor", "SkuCount"])
 
     # Pull only the week demand columns from yarn_demand_df
+    # NOTE: The demand file (Tufting_demand export from Cycle Planner) includes BOTH
+    # projected requirements AND current/existing order requirements. The assignment
+    # adjustment from YAP060 is intentionally excluded from the balance to avoid
+    # double-counting demand that is already captured here.
     week_demand_cols = [f"YR W {i:02d}" for i in range(1, TIME_PHASE_WEEKS + 1)]
     present_week_cols = [c for c in week_demand_cols if c in yarn_demand_df.columns]
 
@@ -134,11 +148,45 @@ def main() -> None:
         {c: "sum" for c in present_week_cols}
     )
 
-    # Build output: demand is the base so yarns with demand but no YarnAlts entry are retained.
-    # Yarns missing from YarnAlts get "Unlisted" for PlanningGroup and ColorGroup.
-    df = yarn_alts_df.merge(demand_subset, on=["YarnType", "YarnColor"], how="right")
+    # Fold in blend-derived component demand produced by yarn_blend_demand_converter.
+    # This file contains the additional lbs for each component yarn driven by the
+    # demand of finished yarns that blend into it (from FIP027 relationships).
+    # Adding it here means the prebuild balance already reflects blend demand without
+    # any on-the-fly logic in downstream steps.
+    blend_demand_path = export_folder / "Yarn Blend Demand.csv"
+    if blend_demand_path.exists():
+        blend_df = pd.read_csv(blend_demand_path, dtype=str)
+        blend_df["YarnType"] = blend_df["YarnType"].str.strip()
+        blend_df["YarnColor"] = blend_df["YarnColor"].str.strip()
+        for col in present_week_cols:
+            if col in blend_df.columns:
+                blend_df[col] = pd.to_numeric(blend_df[col], errors="coerce").fillna(0)
+            else:
+                blend_df[col] = 0.0
+        blend_subset = (
+            blend_df[["YarnType", "YarnColor"] + present_week_cols]
+            .groupby(["YarnType", "YarnColor"], as_index=False)
+            .agg({c: "sum" for c in present_week_cols})
+        )
+        demand_subset = (
+            pd.concat([demand_subset, blend_subset], ignore_index=True)
+            .groupby(["YarnType", "YarnColor"], as_index=False)
+            .agg({c: "sum" for c in present_week_cols})
+        )
+        blend_total = blend_subset[present_week_cols].sum().sum()
+        print(f"  Blend demand folded in: {len(blend_subset)} component yarns, {blend_total:,.1f} total lbs")
+    else:
+        print("  ⚠ Yarn Blend Demand.csv not found — blend demand not included")
+
+    # Build output: outer join so all YarnAlts entries appear even with zero demand,
+    # and yarns with demand but no YarnAlts entry are retained as "Unlisted".
+    df = yarn_alts_df.merge(demand_subset, on=["YarnType", "YarnColor"], how="outer")
     df["PlanningGroup"] = df["PlanningGroup"].fillna("Unlisted")
     df["ColorGroup"] = df["ColorGroup"].fillna("Unlisted")
+
+    if not lbs_per_week_df.empty:
+        df = df.merge(lbs_per_week_df, on=["YarnType", "YarnColor"], how="left")
+    df["LbsPerWeek"] = df["LbsPerWeek"].fillna(0.0) if "LbsPerWeek" in df.columns else 0.0
 
     df = df.merge(fin_inv,  on=["YarnType", "YarnColor"], how="left")
     df = df.merge(wip_inv,  on=["YarnType", "YarnColor"], how="left")
@@ -213,7 +261,7 @@ def main() -> None:
             df[result_col] = (df[f"Week {i-1:02d}"] + df[po_col] - df[demand_col]).round(4)
 
     base_cols = [
-        c for c in ["PlanningGroup", "ColorGroup", "YarnType", "YarnColor", "Supplier", "SkuCount"]
+        c for c in ["PlanningGroup", "ColorGroup", "YarnType", "YarnColor", "Supplier", "SkuCount", "LbsPerWeek"]
         if c in df.columns
     ]
     output_df = df[base_cols + ["FIN Inventory", "WIP Inventory", "Inventory", "Pending Orders", "Total Demand"] + po_week_cols + week_result_cols]

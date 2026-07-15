@@ -1,35 +1,7 @@
 let
-    calendarDateTable = try Excel.CurrentWorkbook(){[Name="Calendar_Date"]}[Content] otherwise null,
-    dateToTest = if calendarDateTable <> null then Date.From(calendarDateTable{0}[Column1]) else Date.From(DateTime.LocalNow()),
-    // Derive fiscal properties of dateToTest for Is* comparisons
-    testWeekStart = Date.AddDays(dateToTest, -Date.DayOfWeek(dateToTest, Day.Sunday)),
-    testCalYear = Date.Year(testWeekStart),
-    testNextYearStart = Date.AddDays(#date(testCalYear + 1, 1, 1), -Date.DayOfWeek(#date(testCalYear + 1, 1, 1), Day.Sunday)),
-    testFiscalYear = if testWeekStart >= testNextYearStart then testCalYear + 1 else testCalYear,
-    testYearStart = Date.AddDays(#date(testFiscalYear, 1, 1), -Date.DayOfWeek(#date(testFiscalYear, 1, 1), Day.Sunday)),
-    testWeekNumber = Int64.From(Duration.Days(testWeekStart - testYearStart) / 7) + 1,
-    testMonth =
-        if testWeekNumber <= 5 then 1
-        else if testWeekNumber <= 9 then 2
-        else if testWeekNumber <= 13 then 3
-        else if testWeekNumber <= 17 then 4
-        else if testWeekNumber <= 22 then 5
-        else if testWeekNumber <= 26 then 6
-        else if testWeekNumber <= 30 then 7
-        else if testWeekNumber <= 34 then 8
-        else if testWeekNumber <= 39 then 9
-        else if testWeekNumber <= 43 then 10
-        else if testWeekNumber <= 47 then 11
-        else 12,
-    testQuarter =
-        if testMonth <= 3 then 1
-        else if testMonth <= 6 then 2
-        else if testMonth <= 9 then 3
-        else 4,
-
     currentYear = Date.Year(DateTime.LocalNow()),
-    StartDate = #date(currentYear - 3, 1, 1),
-    EndDate = #date(currentYear + 1, 12, 31),
+    StartDate = #date(currentYear - 10, 1, 1),
+    EndDate = #date(currentYear + 15, 12, 31),
     DayList = List.Dates(StartDate, Duration.Days(EndDate-StartDate)+1, #duration(1,0,0,0)),
     #"Converted to Table" = Table.FromList(DayList, Splitter.SplitByNothing(), {"Date"}, null, ExtraValues.Error),
     #"Added Columns" = Table.TransformColumns(#"Converted to Table", {{"Date", each _, type date}}),
@@ -143,14 +115,103 @@ let
                 totalWeeksInYear - 48
         else 4, Int64.Type),
     
-    // Remove helper columns
-    #"Removed Helper Columns" = Table.RemoveColumns(#"Added Weeks in Month", {"Week Start Date", "Year Start Week"}),
+    // --- New attributes ---
 
-    // Is* columns based on dateToTest
-    #"Added isDay" = Table.AddColumn(#"Removed Helper Columns", "isDay", each if [Date] = dateToTest then true else null, type logical),
-    #"Added isWeek" = Table.AddColumn(#"Added isDay", "isWeek", each if [Year] = testFiscalYear and [#"Week Number"] = testWeekNumber then true else null, type logical),
-    #"Added isMonth" = Table.AddColumn(#"Added isWeek", "isMonth", each if [Year] = testFiscalYear and [Month] = testMonth then true else null, type logical),
-    #"Added isQuarter" = Table.AddColumn(#"Added isMonth", "isQuarter", each if [Year] = testFiscalYear and [Quarter] = testQuarter then true else null, type logical),
-    #"Added isYear" = Table.AddColumn(#"Added isQuarter", "isYear", each if [Year] = testFiscalYear then true else null, type logical)
+    // Day of Week (0=Sunday, 1=Monday, ..., 6=Saturday)
+    #"Added Day of Week" = Table.AddColumn(#"Added Weeks in Month", "Day of Week", each 
+        Date.DayOfWeek([Date], Day.Sunday), Int64.Type),
+
+    // Day of Week Name (e.g., "Monday")
+    #"Added Day of Week Name" = Table.AddColumn(#"Added Day of Week", "Day of Week Name", each 
+        Date.ToText([Date], "dddd"), type text),
+
+    // Day of Month (1-28 or 1-35 based on fiscal 4/5-week months)
+    #"Added Day of Month" = Table.AddColumn(#"Added Day of Week Name", "Day of Month", each 
+        ([Week of Month] - 1) * 7 + [Day of Week] + 1, Int64.Type),
+
+    // Day of Year (1-364 on 52-week years, 1-371 on 53-week years)
+    #"Added Day of Year" = Table.AddColumn(#"Added Day of Month", "Day of Year", each 
+        ([#"Week Number"] - 1) * 7 + [Day of Week] + 1, Int64.Type),
+
+    // Week End Date (Saturday of the current week)
+    #"Added Week End Date" = Table.AddColumn(#"Added Day of Year", "Week End Date", each 
+        Date.AddDays([Week Start Date], 6), type date),
+
+    // Month-Year label (e.g., "Jan 2026")
+    #"Added Month-Year" = Table.AddColumn(#"Added Week End Date", "Month-Year", each 
+        Text.Start([Month Name], 3) & " " & Number.ToText([Year]), type text),
+
+    // Year-Month Key (e.g., 202601)
+    #"Added Year-Month Key" = Table.AddColumn(#"Added Month-Year", "Year-Month Key", each 
+        [Year] * 100 + [Month], Int64.Type),
+
+    // Week-Year label (e.g., "2026 Week 1")
+    #"Added Week-Year" = Table.AddColumn(#"Added Year-Month Key", "Week-Year", each 
+        Number.ToText([Year]) & " Week " & Number.ToText([#"Week Number"]), type text),
+
+    // Week-Year Key (e.g., "2026W01")
+    #"Added Week-Year Key" = Table.AddColumn(#"Added Week-Year", "Week-Year Key", each 
+        Number.ToText([Year]) & "W" & Text.PadStart(Number.ToText([#"Week Number"]), 2, "0"), type text),
+
+    // Month Start Date (first day of the fiscal month)
+    #"Added Month Start Date" = Table.AddColumn(#"Added Week-Year Key", "Month Start Date", each 
+        let
+            monthFirstWeek =
+                if [Month] = 1 then 1
+                else if [Month] = 2 then 6
+                else if [Month] = 3 then 10
+                else if [Month] = 4 then 14
+                else if [Month] = 5 then 19
+                else if [Month] = 6 then 23
+                else if [Month] = 7 then 27
+                else if [Month] = 8 then 32
+                else if [Month] = 9 then 36
+                else if [Month] = 10 then 40
+                else if [Month] = 11 then 45
+                else 49
+        in
+            Date.AddDays([Year Start Week], (monthFirstWeek - 1) * 7), type date),
+
+    // Month End Date (last day of the fiscal month)
+    #"Added Month End Date" = Table.AddColumn(#"Added Month Start Date", "Month End Date", each 
+        Date.AddDays([Month Start Date], [Weeks in Month] * 7 - 1), type date),
+
+    // Quarter Start Date (first day of the fiscal quarter)
+    #"Added Quarter Start Date" = Table.AddColumn(#"Added Month End Date", "Quarter Start Date", each 
+        let
+            quarterFirstWeek = 
+                if [Quarter] = 1 then 1
+                else if [Quarter] = 2 then 14
+                else if [Quarter] = 3 then 27
+                else 40
+        in
+            Date.AddDays([Year Start Week], (quarterFirstWeek - 1) * 7), type date),
+
+    // Quarter End Date (last day of the fiscal quarter; Q4 accounts for 52/53-week years)
+    #"Added Quarter End Date" = Table.AddColumn(#"Added Quarter Start Date", "Quarter End Date", each 
+        let
+            quarterWeekCount =
+                if [Quarter] = 1 then 13
+                else if [Quarter] = 2 then 13
+                else if [Quarter] = 3 then 13
+                else
+                    let
+                        nextYearStart = Date.AddDays(#date([Year] + 1, 1, 1), -Date.DayOfWeek(#date([Year] + 1, 1, 1), Day.Sunday)),
+                        totalWeeksInYear = Int64.From(Duration.Days(nextYearStart - [Year Start Week]) / 7)
+                    in
+                        totalWeeksInYear - 39
+        in
+            Date.AddDays([Quarter Start Date], quarterWeekCount * 7 - 1), type date),
+
+    // Quarter-Year label (e.g., "2026 Q1")
+    #"Added Quarter-Year" = Table.AddColumn(#"Added Quarter End Date", "Quarter-Year", each 
+        Number.ToText([Year]) & " Q" & Number.ToText([Quarter]), type text),
+
+    // Quarter-Year Key (e.g., "2026Q01")
+    #"Added Quarter-Year Key" = Table.AddColumn(#"Added Quarter-Year", "Quarter-Year Key", each 
+        Number.ToText([Year]) & "Q0" & Number.ToText([Quarter]), type text),
+
+    // Remove helper column (Year Start Week; Week Start Date is now a kept output column)
+    #"Removed Helper Columns" = Table.RemoveColumns(#"Added Quarter-Year Key", {"Year Start Week"})
 in
-    #"Added isYear"
+    #"Removed Helper Columns"

@@ -21,6 +21,8 @@
     }
   },
   "parameters": {
-    "min_lot_lbs": 500
+    "min_lot_lbs": 500,
+    "new_order_trigger_week": 5,
+    "new_order_demand_weeks": 4
   }
 }

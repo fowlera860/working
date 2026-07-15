@@ -1,6 +1,6 @@
 """
-Master Yarn Cycle Planner updater
-Starter pipeline for the new Yarn Cycle Planner project.
+Master Yarn Production Cycle Planner updater
+Starter pipeline for the Yarn Production Cycle Planner project.
 """
 
 import json
@@ -49,7 +49,7 @@ def start_export_log() -> tuple[Optional[TextIO], Optional[TextIO], Optional[Tex
             print("Warning: Unable to create export folder for log file.")
             return None, None, None
 
-        log_path = export_folder / "UpdateYarnCyclePlanner.log"
+        log_path = export_folder / "UpdateYarnProductionCyclePlanner.log"
         log_file = open(log_path, "w", encoding="utf-8")
 
         original_stdout = sys.stdout
@@ -104,7 +104,7 @@ def write_status(status: str, mark_complete: bool = False) -> None:
             print("Warning: Unable to create export folder for status file.")
             return
 
-        status_path = export_folder / "yarn_update_status.json"
+        status_path = export_folder / "yarn_production_update_status.json"
         last_update = load_previous_last_update(status_path)
         if mark_complete:
             last_update = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -126,7 +126,8 @@ def validate_config(config: dict) -> list[str]:
     required_paths = [
         "export_folder",
         "yarn_alts_xlsx",
-        "cycle_planner_yarn_demand_csv",
+        "open_yarn_production_csv",
+        "yarn_order_recommendation_csv",
     ]
     for path_key in required_paths:
         if path_key not in config.get("paths", {}):
@@ -185,9 +186,9 @@ def main() -> None:
     log_file, original_stdout, original_stderr = start_export_log()
 
     try:
-        write_status("updating Yarn Cycle Planner")
+        write_status("updating Yarn Production Cycle Planner")
 
-        print_header("Yarn Cycle Planner Update")
+        print_header("Yarn Production Cycle Planner Update")
         print(f"Started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
         config = load_config()
@@ -207,20 +208,17 @@ def main() -> None:
             write_status("error: runtime architecture mismatch")
             sys.exit(1)
 
-        demand_csv = config.get("paths", {}).get("cycle_planner_yarn_demand_csv", "NOT SET")
-        print(f"\nDemand file: {demand_csv}")
+        open_yarn_prod_csv = config.get("paths", {}).get("open_yarn_production_csv", "NOT SET")
+        yarn_order_rec_csv = config.get("paths", {}).get("yarn_order_recommendation_csv", "NOT SET")
+        print(f"\nOpen Yarn Production file:      {open_yarn_prod_csv}")
+        print(f"Yarn Order Recommendation file: {yarn_order_rec_csv}")
 
+        # Add converters here as they are developed
         converters = [
-            ("FIN_yarn_inventory_converter",        "FIN Yarn Inventory"),
-            ("WIP_yarn_inventory_converter",        "WIP Yarn Inventory"),
-            ("pending_yarn_orders_converter",       "Pending Yarn Orders"),
-            ("yarn_assignments_converter",          "Yarn Assignments"),
-            ("yarn_lot_aggregate_converter",        "Yarn Lot Aggregate"),
-            ("open_yarn_production_converter",      "Open Yarn Production"),
-            ("yarn_blend_xref_converter",           "Yarn Blend XRef"),
-            ("yarn_blend_demand_converter",         "Yarn Blend Demand"),
-            ("yarn_cycle_planner_prebuild_converter", "Yarn Cycle Planner Prebuild"),
-            ("yarn_order_recommendation_converter",   "Yarn Order Recommendations"),
+            ("open_yarn_production_converter",           "Open Yarn Production"),
+            ("yarn_order_recommendation_converter",       "Yarn Order Recommendations"),
+            ("yarn_production_prebuild_sku_converter",    "Yarn Production Prebuild SKU"),
+            ("yarn_production_prebuild_group_converter",  "Yarn Production Prebuild Group"),
         ]
 
         results = {}
@@ -235,16 +233,19 @@ def main() -> None:
         print(f"Completed: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"Duration: {duration:.2f} seconds\n")
 
-        for label, success in results.items():
-            status = "✓ SUCCESS" if success else "✗ FAILED"
-            print(f"  {status}: {label}")
+        if results:
+            for label, success in results.items():
+                status = "✓ SUCCESS" if success else "✗ FAILED"
+                print(f"  {status}: {label}")
 
-        if not all(results.values()):
-            print("\n⚠ One or more Yarn Cycle Planner steps failed")
-            sys.exit(1)
+            if not all(results.values()):
+                print("\n⚠ One or more Yarn Production Cycle Planner steps failed")
+                sys.exit(1)
+        else:
+            print("  (no converters registered)")
 
         write_status("update complete", mark_complete=True)
-        print("\n✓ Yarn Cycle Planner update completed successfully!")
+        print("\n✓ Yarn Production Cycle Planner update completed successfully!")
         sys.exit(0)
     finally:
         stop_export_log(log_file, original_stdout, original_stderr)

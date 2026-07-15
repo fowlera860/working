@@ -1,0 +1,24 @@
+{
+  "paths": {
+    "export_folder": "\\\\tdg-sa-file\\Atmore\\IE\\Yarn Production Cycle Planner\\exports",
+    "yarn_alts_xlsx": "\\\\tdg-sa-file\\Atmore\\IE\\Cycle Planner\\YarnAlts.xlsx",
+    "open_yarn_production_csv": "\\\\tdg-sa-file\\Atmore\\IE\\Yarn Cycle Planner\\exports\\Open Yarn Production.csv",
+    "yarn_order_recommendation_csv": "\\\\tdg-sa-file\\Atmore\\IE\\Yarn Cycle Planner\\exports\\Yarn Order Recommendations.csv"
+  },
+  "excel_sheets": {
+    "yarn_alts_sheet": "YarnAlts"
+  },
+  "databases": {
+    "CAMS": {
+      "type": "sqlserver",
+      "server": "TDG-DLT-IBMSQL",
+      "database": "CAMS"
+    },
+    "CAMSY": {
+      "type": "sqlserver",
+      "server": "TDG-DLT-IBMSQL",
+      "database": "CAMSY"
+    }
+  },
+  "parameters": {}
+}

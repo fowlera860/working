@@ -565,8 +565,12 @@ def add_recommendations(df: pd.DataFrame, minimum_weeks: float, target_weeks: fl
         max_iterations = 10000
         iterations = 0
         total_rec_lbs = calc_total_rec_lbs(group)
-        while total_rec_lbs < tufting_prod_size and iterations < max_iterations:
-            eligible = group['Avg Forecast'] != 0
+        while iterations < max_iterations:
+            # Fill SKUs that haven't yet reached the target weeks
+            eligible = (group['Avg Forecast'] != 0) & (group['Updated Position'] < target_weeks)
+            # tufting_prod_size is a minimum; keep going until minimum is met AND all SKUs are at target
+            if total_rec_lbs >= tufting_prod_size and not eligible.any():
+                break
             if not eligible.any():
                 break
             idx = group.loc[eligible, 'Updated Position'].idxmin()
@@ -719,8 +723,8 @@ def build_projected_production(
             arrival_week_col = week_cols[arrival_week_number - 1]
 
             # Mirror the recommendation logic: fill the lowest-position SKU with rolls
-            # until the group's total recommended lbs reaches tufting_production_size.
-            # All SKUs that receive rolls get the same arrival week number.
+            # until the group's total lbs meets tufting_production_size (minimum) AND
+            # all SKUs have reached target_weeks. All SKUs that receive rolls get the same arrival week number.
             local_rec = {idx: 0.0 for idx in eligible_indices}
             max_iter = 10000
             it = 0
@@ -729,10 +733,18 @@ def build_projected_production(
                     local_rec[idx] * FORECAST_LF_TO_SY_FACTOR * float(updated.at[idx, 'FaceWt']) / 16
                     for idx in eligible_indices
                 )
-                if current_total >= tufting_prod_size:
+                # tufting_prod_size is a minimum; keep going until minimum is met AND all SKUs are at target
+                below_target = [
+                    i for i in eligible_indices
+                    if (float(updated.at[i, arrival_week_col]) + local_rec[i])
+                       / max(float(updated.at[i, 'Avg Forecast']), 1e-9) < target_weeks
+                ]
+                if current_total >= tufting_prod_size and not below_target:
+                    break
+                if not below_target:
                     break
                 min_idx = min(
-                    eligible_indices,
+                    below_target,
                     key=lambda i: (float(updated.at[i, arrival_week_col]) + local_rec[i])
                                   / max(float(updated.at[i, 'Avg Forecast']), 1e-9)
                 )

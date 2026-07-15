@@ -33,8 +33,13 @@
     },
     "half_beam": {
       "run_size_lbs": 3500,
-      "lbs_week_min": 0,
+      "lbs_week_min": 150,
       "lbs_week_max": 299
+    },
+    "quarter_beam": {
+      "run_size_lbs": 1750,
+      "lbs_week_min": 0,
+      "lbs_week_max": 149
     }
   }
 }

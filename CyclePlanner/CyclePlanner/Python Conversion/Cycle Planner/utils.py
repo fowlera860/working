@@ -30,10 +30,18 @@ def load_config(config_path: str = None) -> dict:
         
         # If not found, try current working directory
         if not Path(config_path).exists():
+            print(f"  ⚠ config.json not found at {config_path}, falling back to cwd: {Path.cwd()}")
             config_path = Path.cwd() / "config.json"
     
+    print(f"  Loading config from: {config_path}")
     with open(config_path, 'r') as f:
-        return json.load(f)
+        config = json.load(f)
+    run_sizes = config.get('default_run_sizes', {})
+    if run_sizes:
+        print(f"  Run size tiers loaded: {list(run_sizes.keys())}")
+    else:
+        print(f"  ⚠ No default_run_sizes found in config!")
+    return config
 
 def load_planning_groups(planning_groups_path: str, sheet_name: str = "Planning_Groups") -> pd.DataFrame:
     """Load planning groups from Excel file with error handling"""
@@ -41,6 +49,9 @@ def load_planning_groups(planning_groups_path: str, sheet_name: str = "Planning_
         # Force key columns to load as strings to preserve leading zeros
         dtype_dict = {'Style': 'string', 'Color': 'string', 'Size': 'string', 'Back': 'string'}
         df = pd.read_excel(planning_groups_path, sheet_name=sheet_name, dtype=dtype_dict)
+        for col in ['PlanGroup', 'ColorGroup']:
+            if col in df.columns:
+                df[col] = df[col].str.strip()
         return df
     except ValueError as e:
         # Sheet name not found - show available sheets
